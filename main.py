@@ -7,7 +7,7 @@ import snscrape.modules.twitter as sntwitter
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telegram import Bot
-from fuzzywuzzy import fuzz
+from rapidfuzz import fuzz
 
 # Load configuration from .env
 load_dotenv()
