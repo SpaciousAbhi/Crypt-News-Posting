@@ -1,5 +1,9 @@
-import os, time, sqlite3, requests
+import os
+import time
+import sqlite3
+import requests
 import snscrape.modules.twitter as sntwitter
+
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telegram import Bot
@@ -8,21 +12,21 @@ from fuzzywuzzy import fuzz
 # Load configuration from .env
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
-GROQ_KEY = os.getenv('GROQ_API_KEY')
-POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', 300))
+CHANNEL_ID      = os.getenv('TELEGRAM_CHANNEL_ID')
+GROQ_KEY        = os.getenv('GROQ_API_KEY')
+POLL_INTERVAL   = int(os.getenv('POLL_INTERVAL', 300))
 TWITTER_ACCOUNTS = os.getenv('TWITTER_ACCOUNTS', '').split(',')
 
 # Initialize Telegram bot
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# Initialize SQLite cache
+# Initialize SQLite cache (thread‐safe)
 conn = sqlite3.connect('cache.db', check_same_thread=False)
-cur = conn.cursor()
+cur  = conn.cursor()
 cur.execute(
     """CREATE TABLE IF NOT EXISTS processed (
            tweet_id TEXT PRIMARY KEY,
-           summary TEXT,
+           summary  TEXT,
            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
        )"""
 )
@@ -34,7 +38,8 @@ DUPLICATE_THRESHOLD = 85
 def llama3_summary(text: str) -> str:
     prompt = (
         "Rewrite this tweet as a concise, engaging crypto-news summary "
-        "with relevant emojis to highlight sentiment and key points:\n\n" + text
+        "with relevant emojis to highlight sentiment and key points:\n\n"
+        + text
     )
     url = 'https://api.groq.com/openai/v1/chat/completions'
     headers = {
@@ -79,6 +84,7 @@ last_checked = {
     acct: datetime.utcnow() - timedelta(seconds=POLL_INTERVAL)
     for acct in TWITTER_ACCOUNTS
 }
+
 print(f"Bot started. Polling every {POLL_INTERVAL}s for: {TWITTER_ACCOUNTS}")
 
 while True:
@@ -92,6 +98,7 @@ while True:
                 tid = str(tweet.id)
                 if is_processed(tid):
                     continue
+                # Generate summary with emojis
                 summary = llama3_summary(tweet.content)
                 if is_duplicate(summary):
                     continue
