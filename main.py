@@ -20,7 +20,7 @@ TWITTER_ACCOUNTS = os.getenv('TWITTER_ACCOUNTS', '').split(',')
 # Initialize Telegram bot
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# Initialize SQLite cache (thread‐safe)
+# Initialize SQLite cache
 conn = sqlite3.connect('cache.db', check_same_thread=False)
 cur  = conn.cursor()
 cur.execute(
@@ -38,8 +38,7 @@ DUPLICATE_THRESHOLD = 85
 def llama3_summary(text: str) -> str:
     prompt = (
         "Rewrite this tweet as a concise, engaging crypto-news summary "
-        "with relevant emojis to highlight sentiment and key points:\n\n"
-        + text
+        "with relevant emojis to highlight sentiment and key points:\n\n" + text
     )
     url = 'https://api.groq.com/openai/v1/chat/completions'
     headers = {
@@ -84,7 +83,6 @@ last_checked = {
     acct: datetime.utcnow() - timedelta(seconds=POLL_INTERVAL)
     for acct in TWITTER_ACCOUNTS
 }
-
 print(f"Bot started. Polling every {POLL_INTERVAL}s for: {TWITTER_ACCOUNTS}")
 
 while True:
@@ -98,7 +96,6 @@ while True:
                 tid = str(tweet.id)
                 if is_processed(tid):
                     continue
-                # Generate summary with emojis
                 summary = llama3_summary(tweet.content)
                 if is_duplicate(summary):
                     continue
