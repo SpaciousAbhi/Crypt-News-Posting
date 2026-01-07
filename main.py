@@ -506,9 +506,12 @@ async def main():
 
     if pyrogram_app:
         await pyrogram_app.start()
-    await application.run_polling()
-    if pyrogram_app:
-        await pyrogram_app.stop()
+
+    try:
+        await application.run_polling()
+    finally:
+        if pyrogram_app:
+            await pyrogram_app.stop()
 
 
 if __name__ == "__main__":
