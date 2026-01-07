@@ -6,7 +6,8 @@ from telegram.ext import (
     ConversationHandler,
 )
 from menu import main_menu_keyboard, ai_options_keyboard, confirmation_keyboard
-from config import TASKS, save_tasks_to_yaml
+from database import SessionLocal, Task
+from main import load_tasks
 
 # States for the conversation
 (
@@ -188,15 +189,20 @@ async def show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def confirm_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Saves the task."""
-    new_task = {
-        "name": context.user_data["task_name"],
-        "sources": context.user_data["sources"],
-        "targets": context.user_data["targets"],
-        "ai_options": context.user_data["ai_options"],
-    }
-    TASKS.append(new_task)
-    save_tasks_to_yaml()
+    """Saves the task to the database."""
+    db = SessionLocal()
+    new_task = Task(
+        name=context.user_data["task_name"],
+        sources=context.user_data["sources"],
+        targets=context.user_data["targets"],
+        ai_options=context.user_data["ai_options"],
+        filters={},  # Initialize with empty filters
+    )
+    db.add(new_task)
+    db.commit()
+    db.close()
+    load_tasks()  # Refresh the cache
+
     await update.callback_query.edit_message_text(
         "Task saved successfully!", reply_markup=main_menu_keyboard()
     )

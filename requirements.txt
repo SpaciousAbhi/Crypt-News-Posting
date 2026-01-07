@@ -1,4 +1,5 @@
 requests==2.32.3
 python-telegram-bot[ext]==21.3
 python-dotenv==1.0.1
-PyYAML==6.0.1
+SQLAlchemy==2.0.30
+psycopg2-binary==2.9.9
