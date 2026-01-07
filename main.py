@@ -19,48 +19,8 @@ from database import init_db, SessionLocal, Task
 from cache import TASKS, load_tasks
 from ai_utils import modify_message
 from menu import main_menu_keyboard, remove_task_keyboard
-from conversation import (
-    NAME,
-    SOURCES,
-    TARGETS,
-    AI_OPTIONS,
-    HEADER,
-    FOOTER,
-    WATERMARK_FROM,
-    WATERMARK_TO,
-    CONFIRMATION,
-    add_task_start,
-    received_task_name,
-    received_sources,
-    received_targets,
-    toggle_ai_option,
-    done_ai_options,
-    received_header,
-    received_footer,
-    received_watermark_from,
-    received_watermark_to,
-    confirm_task,
-    cancel_task,
-)
-from edit_conversation import (
-    SELECT_TASK,
-    EDIT_MENU,
-    EDIT_NAME,
-    EDIT_SOURCES,
-    EDIT_TARGETS,
-    EDIT_AI_OPTIONS,
-    CONFIRM_EDIT,
-    edit_task_start,
-    select_task_to_edit,
-    edit_name,
-    received_new_name,
-    edit_sources,
-    received_new_sources,
-    edit_targets,
-    received_new_targets,
-    edit_ai_options,
-    done_editing,
-)
+import conversation as conv
+import edit_conversation as edit_conv
 from notifications import send_admin_notification
 
 # Load environment variables
@@ -155,7 +115,7 @@ async def button_callback_handler(
         await view_tasks(query)
         return ConversationHandler.END
     elif data == "add_task":
-        return await add_task_start(update, context)
+        return await conv.add_task_start(update, context)
     elif data == "remove_task":
         await remove_task(query)
         return ConversationHandler.END
@@ -163,30 +123,30 @@ async def button_callback_handler(
         await delete_task(query)
         return ConversationHandler.END
     elif data == "edit_task":
-        return await edit_task_start(update, context)
+        return await edit_conv.edit_task_start(update, context)
     elif data.startswith("select_task_"):
-        return await select_task_to_edit(update, context)
+        return await edit_conv.select_task_to_edit(update, context)
     elif data == "edit_name":
-        return await edit_name(update, context)
+        return await edit_conv.edit_name(update, context)
     elif data == "edit_sources":
-        return await edit_sources(update, context)
+        return await edit_conv.edit_sources(update, context)
     elif data == "edit_targets":
-        return await edit_targets(update, context)
+        return await edit_conv.edit_targets(update, context)
     elif data == "edit_ai_options":
-        return await edit_ai_options(update, context)
+        return await edit_conv.edit_ai_options(update, context)
     elif data == "done_editing":
-        return await done_editing(update, context)
+        return await edit_conv.done_editing(update, context)
     elif data == "help":
         await help_menu(query)
         return ConversationHandler.END
     elif data.startswith("toggle_"):
-        return await toggle_ai_option(update, context)
+        return await conv.toggle_ai_option(update, context)
     elif data == "done_ai_options":
-        return await done_ai_options(update, context)
+        return await conv.done_ai_options(update, context)
     elif data == "confirm_task":
-        return await confirm_task(update, context)
+        return await conv.confirm_task(update, context)
     elif data == "cancel_task":
-        return await cancel_task(update, context)
+        return await conv.cancel_task(update, context)
     else:
         await query.edit_message_text(
             text=f"Unknown option: {data}",
@@ -377,45 +337,45 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_callback_handler)],
         states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_task_name)],
-            SOURCES: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_sources)],
-            TARGETS: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_targets)],
-            AI_OPTIONS: [
-                CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
-                CallbackQueryHandler(done_ai_options, pattern="^done_ai_options$"),
+            conv.NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_task_name)],
+            conv.SOURCES: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_sources)],
+            conv.TARGETS: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_targets)],
+            conv.AI_OPTIONS: [
+                CallbackQueryHandler(conv.toggle_ai_option, pattern="^toggle_"),
+                CallbackQueryHandler(conv.done_ai_options, pattern="^done_ai_options$"),
             ],
-            HEADER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_header)],
-            FOOTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_footer)],
-            WATERMARK_FROM: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, received_watermark_from)
+            conv.HEADER: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_header)],
+            conv.FOOTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_footer)],
+            conv.WATERMARK_FROM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_watermark_from)
             ],
-            WATERMARK_TO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, received_watermark_to)
+            conv.WATERMARK_TO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_watermark_to)
             ],
-            CONFIRMATION: [
-                CallbackQueryHandler(confirm_task, pattern="^confirm_task$"),
-                CallbackQueryHandler(cancel_task, pattern="^cancel_task$"),
+            conv.CONFIRMATION: [
+                CallbackQueryHandler(conv.confirm_task, pattern="^confirm_task$"),
+                CallbackQueryHandler(conv.cancel_task, pattern="^cancel_task$"),
             ],
-            SELECT_TASK: [
-                CallbackQueryHandler(select_task_to_edit, pattern="^select_task_")
+            edit_conv.SELECT_TASK: [
+                CallbackQueryHandler(edit_conv.select_task_to_edit, pattern="^select_task_")
             ],
-            EDIT_MENU: [
-                CallbackQueryHandler(edit_name, pattern="^edit_name$"),
-                CallbackQueryHandler(edit_sources, pattern="^edit_sources$"),
-                CallbackQueryHandler(edit_targets, pattern="^edit_targets$"),
-                CallbackQueryHandler(edit_ai_options, pattern="^edit_ai_options$"),
-                CallbackQueryHandler(done_editing, pattern="^done_editing$"),
+            edit_conv.EDIT_MENU: [
+                CallbackQueryHandler(edit_conv.edit_name, pattern="^edit_name$"),
+                CallbackQueryHandler(edit_conv.edit_sources, pattern="^edit_sources$"),
+                CallbackQueryHandler(edit_conv.edit_targets, pattern="^edit_targets$"),
+                CallbackQueryHandler(edit_conv.edit_ai_options, pattern="^edit_ai_options$"),
+                CallbackQueryHandler(edit_conv.done_editing, pattern="^done_editing$"),
             ],
-            EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_name)],
-            EDIT_SOURCES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_sources)
+            edit_conv.EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_name)],
+            edit_conv.EDIT_SOURCES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_sources)
             ],
-            EDIT_TARGETS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_targets)
+            edit_conv.EDIT_TARGETS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_targets)
             ],
-            EDIT_AI_OPTIONS: [
-                CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
-                CallbackQueryHandler(done_editing, pattern="^done_editing$"),
+            edit_conv.EDIT_AI_OPTIONS: [
+                CallbackQueryHandler(conv.toggle_ai_option, pattern="^toggle_"),
+                CallbackQueryHandler(edit_conv.done_editing, pattern="^done_editing$"),
             ],
         },
         fallbacks=[CommandHandler("start", start)],
