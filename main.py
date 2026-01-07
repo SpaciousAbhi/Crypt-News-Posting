@@ -3,6 +3,7 @@
 import sqlite3
 import os
 import asyncio
+import signal
 from dotenv import load_dotenv
 from telegram import Update, Message as PTBMessage
 from pyrogram.types import Message as PyrogramMessage
@@ -419,16 +420,14 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Main Application Setup ---
 async def main():
-    """Starts the bot."""
+    """Configures and runs the bot."""
     # Initialize the database and load tasks into the cache
     init_db()
     load_tasks()
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Register the global error handler
-    application.add_error_handler(error_handler)
-
+    # Register handlers
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_callback_handler)],
         states={
@@ -441,19 +440,13 @@ async def main():
             ],
             conv.HEADER: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_header)],
             conv.FOOTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_footer)],
-            conv.WATERMARK_FROM: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_watermark_from)
-            ],
-            conv.WATERMARK_TO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_watermark_to)
-            ],
+            conv.WATERMARK_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_watermark_from)],
+            conv.WATERMARK_TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv.received_watermark_to)],
             conv.CONFIRMATION: [
                 CallbackQueryHandler(conv.confirm_task, pattern="^confirm_task$"),
                 CallbackQueryHandler(conv.cancel_task, pattern="^cancel_task$"),
             ],
-            edit_conv.SELECT_TASK: [
-                CallbackQueryHandler(edit_conv.select_task_to_edit, pattern="^select_task_")
-            ],
+            edit_conv.SELECT_TASK: [CallbackQueryHandler(edit_conv.select_task_to_edit, pattern="^select_task_")],
             edit_conv.EDIT_MENU: [
                 CallbackQueryHandler(edit_conv.edit_name, pattern="^edit_name$"),
                 CallbackQueryHandler(edit_conv.edit_sources, pattern="^edit_sources$"),
@@ -462,12 +455,8 @@ async def main():
                 CallbackQueryHandler(edit_conv.done_editing, pattern="^done_editing$"),
             ],
             edit_conv.EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_name)],
-            edit_conv.EDIT_SOURCES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_sources)
-            ],
-            edit_conv.EDIT_TARGETS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_targets)
-            ],
+            edit_conv.EDIT_SOURCES: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_sources)],
+            edit_conv.EDIT_TARGETS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_conv.received_new_targets)],
             edit_conv.EDIT_AI_OPTIONS: [
                 CallbackQueryHandler(conv.toggle_ai_option, pattern="^toggle_"),
                 CallbackQueryHandler(edit_conv.done_editing, pattern="^done_editing$"),
@@ -479,18 +468,8 @@ async def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
-    application.add_handler(
-        MessageHandler(
-            filters.UpdateType.CHANNEL_POST & ~filters.COMMAND,
-            handle_channel_post,
-        )
-    )
-    application.add_handler(
-        MessageHandler(
-            filters.ChatType.GROUPS & ~filters.COMMAND,
-            handle_group_message,
-        )
-    )
+    application.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST & ~filters.COMMAND, handle_channel_post))
+    application.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_group_message))
 
     if pyrogram_app:
         pyrogram_app.add_handler(
@@ -500,19 +479,39 @@ async def main():
             )
         )
 
-    print("Bot started. Listening for channel posts...")
-    for task in TASKS:
-        print(f" - Task '{task.name}' running for sources: {task.sources}")
+    # --- Graceful Shutdown ---
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Future()
+    loop.add_signal_handler(signal.SIGINT, stop.set_result, None)
+    loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
 
+    # --- Non-blocking Startup ---
+    await application.initialize()
     if pyrogram_app:
         await pyrogram_app.start()
 
-    try:
-        await application.run_polling()
-    finally:
-        if pyrogram_app:
-            await pyrogram_app.stop()
+    await application.start()
+    await application.updater.start_polling()
+
+    print("Bot started. Listening for messages...")
+    for task in TASKS:
+        print(f" - Task '{task.name}' running for sources: {task.sources}")
+
+    # Wait for a shutdown signal
+    await stop
+
+    # --- Shutdown Sequence ---
+    print("Shutting down bot...")
+    await application.updater.stop()
+    await application.stop()
+    if pyrogram_app:
+        await pyrogram_app.stop()
+    await application.shutdown()
+    print("Bot shut down gracefully.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot stopped.")
