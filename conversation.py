@@ -7,7 +7,7 @@ from telegram.ext import (
 )
 from menu import main_menu_keyboard, ai_options_keyboard, confirmation_keyboard
 from database import SessionLocal, Task
-from main import load_tasks
+from cache import load_tasks
 
 # States for the conversation
 (

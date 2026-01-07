@@ -15,8 +15,8 @@ from telegram.ext import (
 )
 
 # Import custom modules
-from database import init_db, SessionLocal
-from database import Task
+from database import init_db, SessionLocal, Task
+from cache import TASKS, load_tasks
 from ai_utils import modify_message
 from menu import main_menu_keyboard, remove_task_keyboard
 from conversation import (
@@ -68,17 +68,6 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
-
-
-# --- In-Memory Task Cache ---
-TASKS = []
-
-def load_tasks():
-    """Loads tasks from the database into the in-memory cache."""
-    global TASKS
-    db = SessionLocal()
-    TASKS = db.query(Task).all()
-    db.close()
 
 
 # --- Database Initialization for Caching ---
@@ -308,7 +297,7 @@ async def help_menu(query):
     """Displays the help menu."""
     help_text = (
         "ℹ️ **How I Work**\n\n"
-        "This bot uses a `config.yaml` file to define 'tasks.' "
+        "This bot uses a database to define 'tasks.' "
         "Each task specifies source and target channel IDs, and AI options "
         "for modifying messages.\n\n"
         "Use the menu to manage your tasks."
