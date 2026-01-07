@@ -67,12 +67,14 @@ def should_forward_message(message_text: str, task_filters: dict) -> bool:
     if include_keywords and not any(
         keyword.lower() in message_text.lower() for keyword in include_keywords
     ):
+        print(f"[Diagnostic]  - Message filtered out: did not contain any of {include_keywords}")
         return False
 
     # If there are exclude keywords, the message must not contain any of them
     if exclude_keywords and any(
         keyword.lower() in message_text.lower() for keyword in exclude_keywords
     ):
+        print(f"[Diagnostic]  - Message filtered out: contained one of {exclude_keywords}")
         return False
 
     return True
@@ -273,31 +275,45 @@ async def help_menu(query):
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles new posts from any channel the bot is in."""
     channel_post = update.channel_post
+    print(f"[Diagnostic] Received channel post update.")
+
     if not channel_post or not channel_post.text:
+        print("[Diagnostic] Post is empty or not text, skipping.")
         return
 
     message_id = channel_post.message_id
     chat_id = channel_post.chat_id
     message_text = channel_post.text
+    print(f"[Diagnostic] Processing message {message_id} from chat {chat_id}")
 
     if is_message_processed(message_id):
+        print(f"[Diagnostic] Message {message_id} has already been processed, skipping.")
         return
 
+    print(f"[Diagnostic] Checking {len(TASKS)} tasks for a match...")
+    forwarded = False
     for task in TASKS:
+        print(f"[Diagnostic]  - Checking task '{task.name}' with sources {task.sources}")
         if chat_id in task.sources:
-            # Check if the message should be forwarded
+            print(f"[Diagnostic]  - Match found! Chat ID {chat_id} is in sources.")
+
             if not should_forward_message(message_text, task.filters or {}):
+                print("[Diagnostic]  - Message did not pass filters.")
                 continue
 
+            print("[Diagnostic]  - Message passed filters. Modifying content...")
             modified_content = modify_message(
                 message_text, task.ai_options or {}, GROQ_API_KEY
             )
+            print(f"[Diagnostic]  - Content modified. Forwarding to targets: {task.targets}")
 
             for target_id in task.targets:
                 try:
                     await context.bot.send_message(
                         chat_id=target_id, text=modified_content
                     )
+                    print(f"[Diagnostic]  - Successfully sent to target {target_id}")
+                    forwarded = True
                 except Exception as e:
                     error_message = (
                         f"Failed to send a message to target `{target_id}`.\n"
@@ -309,7 +325,11 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
                         TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, error_message
                     )
 
-            mark_message_as_processed(message_id)
+    if forwarded:
+        mark_message_as_processed(message_id)
+        print(f"[Diagnostic] Message {message_id} has been marked as processed.")
+    else:
+        print(f"[Diagnostic] Message {message_id} was not forwarded as it did not match any tasks.")
 
 
 # --- Error Handler ---
