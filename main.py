@@ -2,8 +2,10 @@
 
 import sqlite3
 import os
+import asyncio
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, Message as PTBMessage
+from pyrogram.types import Message as PyrogramMessage
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,6 +15,9 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
 )
+from pyrogram import filters as pyrogram_filters
+from pyrogram.handlers import MessageHandler as pyrogram_MessageHandler
+
 
 # Import custom modules
 from database import init_db, SessionLocal, Task
@@ -22,6 +27,8 @@ from menu import main_menu_keyboard, remove_task_keyboard
 import conversation as conv
 import edit_conversation as edit_conv
 from notifications import send_admin_notification
+from pyrogram_client import app as pyrogram_app
+
 
 # Load environment variables
 load_dotenv()
@@ -259,10 +266,27 @@ async def help_menu(query):
     """Displays the help menu."""
     help_text = (
         "ℹ️ **How I Work**\n\n"
-        "This bot uses a database to define 'tasks.' "
-        "Each task specifies source and target channel IDs, and AI options "
-        "for modifying messages.\n\n"
-        "Use the menu to manage your tasks."
+        "This bot forwards messages from source chats to target chats, with optional AI modifications.\n\n"
+        "**Key Concepts:**\n"
+        "- **Tasks:** A task defines a forwarding rule, including sources, targets, and AI options.\n"
+        "- **Sources & Targets:** These are chat IDs. The bot listens for messages in sources and sends them to targets.\n\n"
+        "---\n\n"
+        "🔑 **Accessing Private Chats**\n\n"
+        "For the bot to work with private channels and groups, you need to configure access correctly.\n\n"
+        "**1. Using the Bot Account:**\n"
+        "- **Private Channels:** The bot must be added as an **administrator** to both the source and target channels.\n"
+        "- **Private Groups:** The bot must be a **member** of both the source and target groups.\n\n"
+        "**2. Using a User Account (via Pyrogram):**\n"
+        "To access chats where a bot cannot be added (e.g., other users' DMs, or channels where you are just a member), you can run this bot as your own user account.\n"
+        "- Set the `PYROGRAM_SESSION_STRING`, `API_ID`, and `API_HASH` environment variables.\n"
+        "- You can generate a session string using a script. Search for 'Pyrogram generate session string' for instructions.\n\n"
+        "---\n\n"
+        "🆔 **Finding Chat IDs**\n\n"
+        "You'll need the numerical ID for private chats.\n"
+        "- **Easy Method:** Forward a message from the private channel or group to a bot like `@JsonDumpBot`.\n"
+        "- The bot will reply with a JSON message. Look for `forward_from_chat` -> `id`. This is your chat ID.\n"
+        "- Private chat IDs are usually negative numbers (e.g., `-100123456789`).\n\n"
+        "Use the main menu to manage your forwarding tasks."
     )
     await query.edit_message_text(
         text=help_text,
@@ -272,18 +296,16 @@ async def help_menu(query):
 
 
 # --- Core Message Handling Logic ---
-async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles new posts from any channel the bot is in."""
-    channel_post = update.channel_post
-    print(f"[Diagnostic] Received channel post update.")
+async def process_message(message: any, bot: any):
+    """Processes a message from any source (PTB or Pyrogram)."""
+    client_type = 'Pyrogram'
+    if isinstance(message, PTBMessage):
+        client_type = 'PTB'
 
-    if not channel_post or not channel_post.text:
-        print("[Diagnostic] Post is empty or not text, skipping.")
-        return
+    message_id = message.message_id if client_type == 'PTB' else message.id
+    chat_id = message.chat_id if client_type == 'PTB' else message.chat.id
+    text = message.text or message.caption
 
-    message_id = channel_post.message_id
-    chat_id = channel_post.chat_id
-    message_text = channel_post.text
     print(f"[Diagnostic] Processing message {message_id} from chat {chat_id}")
 
     if is_message_processed(message_id):
@@ -297,39 +319,90 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         if chat_id in task.sources:
             print(f"[Diagnostic]  - Match found! Chat ID {chat_id} is in sources.")
 
-            if not should_forward_message(message_text, task.filters or {}):
-                print("[Diagnostic]  - Message did not pass filters.")
-                continue
+            if text:
+                if not should_forward_message(text, task.filters or {}):
+                    print("[Diagnostic]  - Message did not pass filters.")
+                    continue
 
-            print("[Diagnostic]  - Message passed filters. Modifying content...")
-            modified_content = modify_message(
-                message_text, task.ai_options or {}, GROQ_API_KEY
-            )
-            print(f"[Diagnostic]  - Content modified. Forwarding to targets: {task.targets}")
+                print("[Diagnostic]  - Message passed filters. Modifying content...")
+                modified_content = modify_message(
+                    text, task.ai_options or {}, GROQ_API_KEY
+                )
+                print(f"[Diagnostic]  - Content modified. Forwarding to targets: {task.targets}")
 
-            for target_id in task.targets:
-                try:
-                    await context.bot.send_message(
-                        chat_id=target_id, text=modified_content
-                    )
-                    print(f"[Diagnostic]  - Successfully sent to target {target_id}")
-                    forwarded = True
-                except Exception as e:
-                    error_message = (
-                        f"Failed to send a message to target `{target_id}`.\n"
-                        f"**Reason:** `{e}`\n\n"
-                        "Please ensure the bot is an administrator in the channel."
-                    )
-                    print(f"[Error] {error_message}")
-                    send_admin_notification(
-                        TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, error_message
-                    )
+                for target_id in task.targets:
+                    try:
+                        await bot.send_message(
+                            chat_id=target_id, text=modified_content
+                        )
+                        print(f"[Diagnostic]  - Successfully sent to target {target_id}")
+                        notification_message = f"✅ Message successfully forwarded and modified from {chat_id} to {target_id}."
+                        send_admin_notification(TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, notification_message)
+                        forwarded = True
+                    except Exception as e:
+                        error_message = (
+                            f"Failed to send a message to target `{target_id}`.\n"
+                            f"**Reason:** `{e}`\n\n"
+                            "Please ensure the bot is an administrator in the channel."
+                        )
+                        print(f"[Error] {error_message}")
+                        send_admin_notification(
+                            TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, error_message
+                        )
+            else:
+                for target_id in task.targets:
+                    try:
+                        if client_type == 'PTB':
+                            await bot.forward_message(
+                                chat_id=target_id, from_chat_id=chat_id, message_id=message_id
+                            )
+                        else:
+                            await bot.forward_messages(
+                                chat_id=target_id, from_chat_id=chat_id, message_ids=message_id
+                            )
+                        print(f"[Diagnostic]  - Successfully forwarded to target {target_id}")
+                        notification_message = f"✅ Message successfully forwarded from {chat_id} to {target_id}."
+                        send_admin_notification(TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, notification_message)
+                        forwarded = True
+                    except Exception as e:
+                        error_message = (
+                            f"Failed to forward a message to target `{target_id}`.\n"
+                            f"**Reason:** `{e}`\n\n"
+                            "Please ensure the bot is an administrator in the channel."
+                        )
+                        print(f"[Error] {error_message}")
+                        send_admin_notification(
+                            TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, error_message
+                        )
 
     if forwarded:
         mark_message_as_processed(message_id)
         print(f"[Diagnostic] Message {message_id} has been marked as processed.")
     else:
         print(f"[Diagnostic] Message {message_id} was not forwarded as it did not match any tasks.")
+
+
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles new posts from any channel the bot is in."""
+    channel_post = update.channel_post
+    print(f"[Diagnostic] Received channel post update.")
+
+    await process_message(channel_post, context.bot)
+
+
+async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles new messages from any group the bot is in."""
+    group_message = update.message
+    print(f"[Diagnostic] Received group message.")
+
+    await process_message(group_message, context.bot)
+
+
+async def handle_pyrogram_message(client, message):
+    """Handles incoming messages from Pyrogram client."""
+    print(f"[Diagnostic] Received Pyrogram message.")
+
+    await process_message(message, client)
 
 
 # --- Error Handler ---
@@ -345,7 +418,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Main Application Setup ---
-def main():
+async def main():
     """Starts the bot."""
     # Initialize the database and load tasks into the cache
     init_db()
@@ -408,17 +481,35 @@ def main():
     application.add_handler(conv_handler)
     application.add_handler(
         MessageHandler(
-            filters.UpdateType.CHANNEL_POST & filters.TEXT,
+            filters.UpdateType.CHANNEL_POST & ~filters.COMMAND,
             handle_channel_post,
         )
     )
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND,
+            handle_group_message,
+        )
+    )
+
+    if pyrogram_app:
+        pyrogram_app.add_handler(
+            pyrogram_MessageHandler(
+                handle_pyrogram_message,
+                pyrogram_filters.private | pyrogram_filters.group | pyrogram_filters.channel,
+            )
+        )
 
     print("Bot started. Listening for channel posts...")
     for task in TASKS:
         print(f" - Task '{task.name}' running for sources: {task.sources}")
 
-    application.run_polling()
+    if pyrogram_app:
+        await pyrogram_app.start()
+    await application.run_polling()
+    if pyrogram_app:
+        await pyrogram_app.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
