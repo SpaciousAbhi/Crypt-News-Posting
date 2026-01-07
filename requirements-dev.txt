@@ -1,0 +1,4 @@
+# requirements-dev.txt
+
+black==24.4.2
+flake8==7.0.0

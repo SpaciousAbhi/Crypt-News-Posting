@@ -1,14 +1,16 @@
 # main.py
 
 import os
-import time
 import sqlite3
-import snscrape.modules.twitter as sntwitter
-
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from telegram import Bot
-from rapidfuzz import fuzz
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
 # Import custom modules
 from config import TASKS
@@ -16,104 +18,153 @@ from ai_utils import modify_message
 
 # Load configuration from .env
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-GROQ_KEY        = os.getenv('GROQ_API_KEY')
-POLL_INTERVAL   = int(os.getenv('POLL_INTERVAL', 300))
-DUPLICATE_THRESHOLD = 85
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
 
-# Initialize Telegram bot
-bot = Bot(token=TELEGRAM_TOKEN)
-
-# Initialize SQLite cache
-conn = sqlite3.connect('cache.db', check_same_thread=False)
-cur  = conn.cursor()
+# --- Database Initialization ---
+conn = sqlite3.connect("cache.db", check_same_thread=False)
+cur = conn.cursor()
 cur.execute(
     """CREATE TABLE IF NOT EXISTS processed (
-           tweet_id TEXT PRIMARY KEY,
-           summary  TEXT,
+           message_id TEXT PRIMARY KEY,
            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
        )"""
 )
 conn.commit()
 
-# --- Cache Helper Functions ---
 
-def is_processed(tid: str) -> bool:
-    cur.execute('SELECT 1 FROM processed WHERE tweet_id=?', (tid,))
+# --- Cache Helper Functions ---
+def is_message_processed(message_id: int) -> bool:
+    """Checks if a message_id has already been processed."""
+    cur.execute("SELECT 1 FROM processed WHERE message_id=?", (str(message_id),))
     return cur.fetchone() is not None
 
-def mark_processed(tid: str, summary: str):
+
+def mark_message_as_processed(message_id: int):
+    """Marks a message_id as processed."""
     cur.execute(
-        'INSERT INTO processed (tweet_id, summary) VALUES (?, ?)',
-        (tid, summary)
+        "INSERT INTO processed (message_id) VALUES (?)", (str(message_id),)
     )
     conn.commit()
 
-def is_duplicate(summary: str) -> bool:
-    cur.execute('SELECT summary FROM processed ORDER BY timestamp DESC LIMIT 100')
-    for (old,) in cur.fetchall():
-        if fuzz.token_set_ratio(summary, old) >= DUPLICATE_THRESHOLD:
-            return True
-    return False
 
-# --- Telegram Helper Function ---
+# --- Telegram Command Handlers ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a welcome message when the /start command is issued."""
+    welcome_text = (
+        "👋 **Welcome to the Advanced Forwarding Bot!**\n\n"
+        "I monitor channels and forward their messages to your targets, "
+        "enhanced with AI modifications.\n\n"
+        "**Available Commands:**\n"
+        "`/start`  - Shows this welcome message.\n"
+        "`/status` - Displays the status of all tasks.\n"
+        "`/help`   - Provides help and info about the bot."
+    )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-def post_to_targets(msg: str, targets: list):
-    for channel_id in targets:
-        try:
-            bot.send_message(chat_id=channel_id, text=msg, parse_mode='HTML')
-        except Exception as e:
-            print(f"[Error] Failed to send to {channel_id}: {e}")
 
-# --- Main Polling Loop ---
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays the status of all configured forwarding tasks."""
+    if not TASKS:
+        await update.message.reply_text("No tasks are currently configured.")
+        return
 
-# Initialize last checked timestamps for all sources across all tasks
-last_checked = {}
-for task in TASKS:
-    for source in task['sources']:
-        if source not in last_checked:
-            last_checked[source] = datetime.utcnow() - timedelta(seconds=POLL_INTERVAL)
+    status_message = (
+        "📊 **Bot Status**\n\nI am running the following tasks:\n\n"
+    )
+    for i, task in enumerate(TASKS, 1):
+        task_name = task.get("name", "Unnamed Task")
+        status_message += f"🔹 **Task {i}: {task_name}**\n"
 
-print(f"Bot started. Polling every {POLL_INTERVAL}s...")
-for task in TASKS:
-    print(f" - Task '{task['name']}' running for sources: {task['sources']}")
+        sources = ", ".join(map(str, task.get("sources", [])))
+        status_message += f"   - **Sources:** `{sources}`\n"
 
-while True:
-    try:
-        for task in TASKS:
-            sources = task['sources']
-            targets = task['targets']
-            ai_options = task['ai_options']
+        targets = ", ".join(map(str, task.get("targets", [])))
+        status_message += f"   - **Targets:** `{targets}`\n\n"
 
-            for source_acct in sources:
-                since = last_checked[source_acct]
-                query = f"from:{source_acct.lstrip('@')} since:{since.date()}"
+    await update.message.reply_text(status_message, parse_mode="Markdown")
 
-                # Scrape tweets
-                for tweet in sntwitter.TwitterSearchScraper(query).get_items():
-                    if tweet.date <= since:
-                        continue
 
-                    tid = str(tweet.id)
-                    if is_processed(tid):
-                        continue
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Provides help information."""
+    help_text = (
+        "ℹ️ **How I Work**\n\n"
+        "This bot uses a `config.yaml` file to define 'tasks.' "
+        "Each task specifies source and target channel IDs, and AI options "
+        "for modifying messages (e.g., summarize, reword).\n\n"
+        "To change my behavior, modify `config.yaml` and restart."
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
 
-                    # Modify message using AI
-                    modified_content = modify_message(tweet.content, ai_options, GROQ_KEY)
 
-                    if is_duplicate(modified_content):
-                        continue
+# --- Core Message Handling Logic ---
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles new posts from any channel the bot is in."""
+    channel_post = update.channel_post
+    if not channel_post or not channel_post.text:
+        return
 
-                    # Post to all target channels for the task
-                    post_to_targets(modified_content, targets)
+    message_id = channel_post.message_id
+    chat_id = channel_post.chat_id
+    message_text = channel_post.text
 
-                    # Mark as processed
-                    mark_processed(tid, modified_content)
+    # Prevent processing the same message multiple times
+    if is_message_processed(message_id):
+        return
 
-                # Update last checked time for this source
-                last_checked[source_acct] = datetime.utcnow()
+    for task in TASKS:
+        source_ids = task.get("sources", [])
+        if chat_id in source_ids:
+            targets = task.get("targets", [])
+            ai_options = task.get("ai_options", {})
 
-    except Exception as e:
-        print(f"[Error] An unexpected error occurred: {e}")
+            # Modify the message using AI
+            modified_content = modify_message(
+                message_text, ai_options, GROQ_KEY
+            )
 
-    time.sleep(POLL_INTERVAL)
+            # Forward the modified message to all target channels
+            for target_id in targets:
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_id, text=modified_content
+                    )
+                except Exception as e:
+                    print(
+                        f"[Error] Failed to send to target {target_id}: {e}"
+                    )
+
+            # Mark the message as processed after forwarding
+            mark_message_as_processed(message_id)
+
+
+# --- Main Application Setup ---
+def main():
+    """Starts the bot."""
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Register command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("help", help_command))
+
+    # Register the message handler for channel posts
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.CHANNEL_POST & filters.TEXT,
+            handle_channel_post,
+        )
+    )
+
+    print("Bot started. Listening for channel posts...")
+    for task in TASKS:
+        task_name = task.get("name", "Unnamed Task")
+        sources = task.get("sources", [])
+        print(f" - Task '{task_name}' running for sources: {sources}")
+
+    # Start the Bot
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
