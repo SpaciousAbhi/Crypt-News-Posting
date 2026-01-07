@@ -1,7 +1,7 @@
 # main.py
 
-import os
 import sqlite3
+import os
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
@@ -15,7 +15,8 @@ from telegram.ext import (
 )
 
 # Import custom modules
-from config import TASKS, save_tasks_to_yaml
+from database import init_db, SessionLocal, Task
+from cache import TASKS, load_tasks
 from ai_utils import modify_message
 from menu import main_menu_keyboard, remove_task_keyboard
 from conversation import (
@@ -62,13 +63,14 @@ from edit_conversation import (
 )
 from notifications import send_admin_notification
 
-# Load configuration from .env
+# Load environment variables
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GROQ_KEY = os.getenv("GROQ_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
-# --- Database Initialization ---
+
+# --- Database Initialization for Caching ---
 conn = sqlite3.connect("cache.db", check_same_thread=False)
 cur = conn.cursor()
 cur.execute(
@@ -194,7 +196,7 @@ async def button_callback_handler(
 
 
 async def view_tasks(query):
-    """Displays the current tasks."""
+    """Displays a detailed view of the current tasks."""
     if not TASKS:
         await query.edit_message_text(
             text="No tasks are currently configured.",
@@ -204,12 +206,51 @@ async def view_tasks(query):
 
     status_message = "📊 **Current Tasks**\n\n"
     for i, task in enumerate(TASKS, 1):
-        task_name = task.get("name", "Unnamed Task")
-        status_message += f"🔹 **Task {i}: {task_name}**\n"
-        sources = ", ".join(map(str, task.get("sources", [])))
+        status_message += f"🔹 **Task {i}: {task.name}**\n"
+
+        # Sources and Targets
+        sources = ", ".join(map(str, task.sources))
         status_message += f"   - **Sources:** `{sources}`\n"
-        targets = ", ".join(map(str, task.get("targets", [])))
-        status_message += f"   - **Targets:** `{targets}`\n\n"
+        targets = ", ".join(map(str, task.targets))
+        status_message += f"   - **Targets:** `{targets}`\n"
+
+        # AI Options
+        if task.ai_options:
+            status_message += "   - **AI Options:**\n"
+            if task.ai_options.get("reword"):
+                status_message += "     - Reword: `Yes`\n"
+            else:
+                status_message += "     - Reword: `No`\n"
+
+            if task.ai_options.get("summarize"):
+                summary_length = task.ai_options.get("summary_length", "Default")
+                status_message += (
+                    f"     - Summarize: `Yes (Length: {summary_length})`\n"
+                )
+            else:
+                status_message += "     - Summarize: `No`\n"
+
+            if task.ai_options.get("header"):
+                status_message += f"     - Header: `{task.ai_options['header']}`\n"
+            if task.ai_options.get("footer"):
+                status_message += f"     - Footer: `{task.ai_options['footer']}`\n"
+            watermark = task.ai_options.get("watermark", {})
+            if watermark and watermark.get("replace_from") and watermark.get("replace_to"):
+                status_message += (
+                    f"     - Watermark: `{watermark['replace_from']}` -> `{watermark['replace_to']}`\n"
+                )
+
+        # Filters
+        if task.filters:
+            status_message += "   - **Filters:**\n"
+            include = ", ".join(task.filters.get("include_keywords", []))
+            if include:
+                status_message += f"     - Include Keywords: `{include}`\n"
+            exclude = ", ".join(task.filters.get("exclude_keywords", []))
+            if exclude:
+                status_message += f"     - Exclude Keywords: `{exclude}`\n"
+
+        status_message += "\n"
 
     await query.edit_message_text(
         text=status_message,
@@ -226,27 +267,37 @@ async def remove_task(query):
         )
         return
     await query.edit_message_text(
-        text="Select a task to remove:", reply_markup=remove_task_keyboard()
+        text="Select a task to remove:", reply_markup=remove_task_keyboard(TASKS)
     )
 
 
 async def delete_task(query):
     """Deletes the selected task."""
-    task_index = int(query.data.split("_")[2])
-    task_name = TASKS[task_index]["name"]
-    del TASKS[task_index]
-    save_tasks_to_yaml()
-    await query.edit_message_text(
-        text=f"Task '{task_name}' has been removed.",
-        reply_markup=main_menu_keyboard(),
-    )
+    task_id = int(query.data.split("_")[2])
+    db = SessionLocal()
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        task_name = task.name
+        db.delete(task)
+        db.commit()
+        load_tasks()  # Refresh the cache
+        await query.edit_message_text(
+            text=f"Task '{task_name}' has been removed.",
+            reply_markup=main_menu_keyboard(),
+        )
+    else:
+        await query.edit_message_text(
+            text="Task not found.",
+            reply_markup=main_menu_keyboard(),
+        )
+    db.close()
 
 
 async def help_menu(query):
     """Displays the help menu."""
     help_text = (
         "ℹ️ **How I Work**\n\n"
-        "This bot uses a `config.yaml` file to define 'tasks.' "
+        "This bot uses a database to define 'tasks.' "
         "Each task specifies source and target channel IDs, and AI options "
         "for modifying messages.\n\n"
         "Use the menu to manage your tasks."
@@ -273,19 +324,16 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     for task in TASKS:
-        source_ids = task.get("sources", [])
-        if chat_id in source_ids:
+        if chat_id in task.sources:
             # Check if the message should be forwarded
-            if not should_forward_message(message_text, task.get("filters", {})):
+            if not should_forward_message(message_text, task.filters or {}):
                 continue
 
-            targets = task.get("targets", [])
-            ai_options = task.get("ai_options", {})
             modified_content = modify_message(
-                message_text, ai_options, GROQ_KEY
+                message_text, task.ai_options or {}, GROQ_API_KEY
             )
 
-            for target_id in targets:
+            for target_id in task.targets:
                 try:
                     await context.bot.send_message(
                         chat_id=target_id, text=modified_content
@@ -317,7 +365,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # --- Main Application Setup ---
 def main():
     """Starts the bot."""
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Initialize the database and load tasks into the cache
+    init_db()
+    load_tasks()
+
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Register the global error handler
     application.add_error_handler(error_handler)
@@ -381,9 +433,7 @@ def main():
 
     print("Bot started. Listening for channel posts...")
     for task in TASKS:
-        task_name = task.get("name", "Unnamed Task")
-        sources = task.get("sources", [])
-        print(f" - Task '{task_name}' running for sources: {sources}")
+        print(f" - Task '{task.name}' running for sources: {task.sources}")
 
     application.run_polling()
 
