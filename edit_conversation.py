@@ -9,8 +9,8 @@ from menu import main_menu_keyboard, ai_options_keyboard
 from database import SessionLocal, Task
 from cache import load_tasks
 
-# States for the conversation
-SELECT_TASK, EDIT_MENU, EDIT_NAME, EDIT_SOURCES, EDIT_TARGETS, EDIT_AI_OPTIONS, CONFIRM_EDIT = range(7)
+# States for the conversation (starting from 9 to avoid collision with conversation.py)
+SELECT_TASK, EDIT_MENU, EDIT_NAME, EDIT_SOURCES, EDIT_TARGETS, EDIT_AI_OPTIONS, CONFIRM_EDIT = range(9, 16)
 
 async def edit_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the conversation to edit a task."""

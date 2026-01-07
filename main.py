@@ -305,7 +305,9 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
                         "Please ensure the bot is an administrator in the channel."
                     )
                     print(f"[Error] {error_message}")
-                    send_admin_notification(error_message)
+                    send_admin_notification(
+                        TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, error_message
+                    )
 
             mark_message_as_processed(message_id)
 
@@ -319,7 +321,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         f"**Error:** `{context.error}`"
     )
     print(f"[Critical Error] {error_message}")
-    send_admin_notification(error_message)
+    send_admin_notification(TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID, error_message)
 
 
 # --- Main Application Setup ---
