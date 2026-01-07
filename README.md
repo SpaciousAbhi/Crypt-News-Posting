@@ -5,7 +5,7 @@ This bot monitors messages from a set of source Telegram channels, modifies them
 ## Features
 
 -   **Multi-Task Support**: Run multiple forwarding tasks at once, each with its own sources, targets, and AI rules.
--   **Flexible Configuration**: Define all tasks in a simple `config.yaml` file—no need to edit Python code.
+-   **Flexible Configuration**: Define all tasks in a simple `config.yaml` file, or add new tasks on the fly with the inline button interface.
 -   **AI-Powered Modifications**:
     -   **Reword**: Rephrase content for clarity and engagement.
     -   **Summarize**: Condense long messages into concise summaries.
@@ -63,11 +63,12 @@ The bot will start listening for new messages in the source channels.
 
 ## Interactive Commands
 
-You can interact with the bot directly in Telegram:
+You can interact with the bot directly in Telegram by sending the `/start` command. This will open a menu of inline buttons that will allow you to:
 
--   `/start`: Displays a welcome message and lists available commands.
--   `/status`: Shows the current configuration and status of all running tasks.
--   `/help`: Provides information on how the bot works and how to configure it.
+-   **View Tasks**: Displays a list of all current forwarding tasks.
+-   **Add a New Task**: Initiates a conversation to create a new task.
+-   **Remove a Task**: Allows you to select and delete an existing task.
+-   **Help**: Shows detailed instructions.
 
 ## Development
 
