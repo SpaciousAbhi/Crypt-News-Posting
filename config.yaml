@@ -25,6 +25,9 @@ tasks:
       watermark:
         replace_from: "Example.com"
         replace_to: "MyBrand"
+    filters:
+      include_keywords: ["breaking", "update"]
+      exclude_keywords: ["sports", "entertainment"]
 
   - name: "Task 2: Sports and Entertainment"
     sources:
@@ -41,3 +44,6 @@ tasks:
       watermark:
         replace_from: "SourceBrand"
         replace_to: "MyBrand"
+    filters:
+      include_keywords: []
+      exclude_keywords: ["politics"]

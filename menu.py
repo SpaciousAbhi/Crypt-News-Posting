@@ -9,6 +9,7 @@ def main_menu_keyboard():
         [InlineKeyboardButton("📊 View Tasks", callback_data="view_tasks")],
         [InlineKeyboardButton("➕ Add New Task", callback_data="add_task")],
         [InlineKeyboardButton("➖ Remove Task", callback_data="remove_task")],
+        [InlineKeyboardButton("✏️ Edit Task", callback_data="edit_task")],
         [InlineKeyboardButton("❓ Help", callback_data="help")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -33,7 +34,7 @@ def ai_options_keyboard(options):
     return InlineKeyboardMarkup(keyboard)
 
 def remove_task_keyboard():
-    """Returns a keyboard with a button for each task."""
+    """Returns a keyboard with a button for each task to remove."""
     keyboard = []
     for i, task in enumerate(TASKS):
         keyboard.append(
@@ -44,6 +45,31 @@ def remove_task_keyboard():
             ]
         )
     keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="start")])
+    return InlineKeyboardMarkup(keyboard)
+
+def edit_task_keyboard():
+    """Returns a keyboard with a button for each task to edit."""
+    keyboard = []
+    for i, task in enumerate(TASKS):
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    f"✏️ {task['name']}", callback_data=f"select_task_{i}"
+                )
+            ]
+        )
+    keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="start")])
+    return InlineKeyboardMarkup(keyboard)
+
+def edit_options_keyboard():
+    """Returns a keyboard with options to edit a task."""
+    keyboard = [
+        [InlineKeyboardButton("✏️ Name", callback_data="edit_name")],
+        [InlineKeyboardButton("📥 Sources", callback_data="edit_sources")],
+        [InlineKeyboardButton("📤 Targets", callback_data="edit_targets")],
+        [InlineKeyboardButton("🤖 AI Options", callback_data="edit_ai_options")],
+        [InlineKeyboardButton("✅ Done Editing", callback_data="done_editing")],
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 def confirmation_keyboard():

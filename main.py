@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 # Import custom modules
-from config import TASKS, save_tasks_to_yaml, load_tasks_from_yaml
+from config import TASKS, save_tasks_to_yaml
 from ai_utils import modify_message
 from menu import main_menu_keyboard, remove_task_keyboard
 from conversation import (
@@ -23,6 +23,10 @@ from conversation import (
     SOURCES,
     TARGETS,
     AI_OPTIONS,
+    HEADER,
+    FOOTER,
+    WATERMARK_FROM,
+    WATERMARK_TO,
     CONFIRMATION,
     add_task_start,
     received_task_name,
@@ -30,14 +34,39 @@ from conversation import (
     received_targets,
     toggle_ai_option,
     done_ai_options,
+    received_header,
+    received_footer,
+    received_watermark_from,
+    received_watermark_to,
     confirm_task,
     cancel_task,
 )
+from edit_conversation import (
+    SELECT_TASK,
+    EDIT_MENU,
+    EDIT_NAME,
+    EDIT_SOURCES,
+    EDIT_TARGETS,
+    EDIT_AI_OPTIONS,
+    CONFIRM_EDIT,
+    edit_task_start,
+    select_task_to_edit,
+    edit_name,
+    received_new_name,
+    edit_sources,
+    received_new_sources,
+    edit_targets,
+    received_new_targets,
+    edit_ai_options,
+    done_editing,
+)
+from notifications import send_admin_notification
 
 # Load configuration from .env
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_KEY = os.getenv("GROQ_API_KEY")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
 # --- Database Initialization ---
 conn = sqlite3.connect("cache.db", check_same_thread=False)
@@ -64,6 +93,27 @@ def mark_message_as_processed(message_id: int):
         "INSERT INTO processed (message_id) VALUES (?)", (str(message_id),)
     )
     conn.commit()
+
+
+# --- Content Filtering ---
+def should_forward_message(message_text: str, task_filters: dict) -> bool:
+    """Checks if a message should be forwarded based on keywords."""
+    include_keywords = task_filters.get("include_keywords", [])
+    exclude_keywords = task_filters.get("exclude_keywords", [])
+
+    # If there are include keywords, the message must contain at least one of them
+    if include_keywords and not any(
+        keyword.lower() in message_text.lower() for keyword in include_keywords
+    ):
+        return False
+
+    # If there are exclude keywords, the message must not contain any of them
+    if exclude_keywords and any(
+        keyword.lower() in message_text.lower() for keyword in exclude_keywords
+    ):
+        return False
+
+    return True
 
 
 # --- Telegram Command Handlers ---
@@ -110,6 +160,20 @@ async def button_callback_handler(
     elif data.startswith("delete_task_"):
         await delete_task(query)
         return ConversationHandler.END
+    elif data == "edit_task":
+        return await edit_task_start(update, context)
+    elif data.startswith("select_task_"):
+        return await select_task_to_edit(update, context)
+    elif data == "edit_name":
+        return await edit_name(update, context)
+    elif data == "edit_sources":
+        return await edit_sources(update, context)
+    elif data == "edit_targets":
+        return await edit_targets(update, context)
+    elif data == "edit_ai_options":
+        return await edit_ai_options(update, context)
+    elif data == "done_editing":
+        return await done_editing(update, context)
     elif data == "help":
         await help_menu(query)
         return ConversationHandler.END
@@ -172,7 +236,6 @@ async def delete_task(query):
     task_name = TASKS[task_index]["name"]
     del TASKS[task_index]
     save_tasks_to_yaml()
-    load_tasks_from_yaml()
     await query.edit_message_text(
         text=f"Task '{task_name}' has been removed.",
         reply_markup=main_menu_keyboard(),
@@ -212,6 +275,10 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     for task in TASKS:
         source_ids = task.get("sources", [])
         if chat_id in source_ids:
+            # Check if the message should be forwarded
+            if not should_forward_message(message_text, task.get("filters", {})):
+                continue
+
             targets = task.get("targets", [])
             ai_options = task.get("ai_options", {})
             modified_content = modify_message(
@@ -224,15 +291,36 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
                         chat_id=target_id, text=modified_content
                     )
                 except Exception as e:
-                    print(f"[Error] Failed to send to target {target_id}: {e}")
+                    error_message = (
+                        f"Failed to send a message to target `{target_id}`.\n"
+                        f"**Reason:** `{e}`\n\n"
+                        "Please ensure the bot is an administrator in the channel."
+                    )
+                    print(f"[Error] {error_message}")
+                    send_admin_notification(error_message)
 
             mark_message_as_processed(message_id)
+
+
+# --- Error Handler ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Handles all unhandled exceptions and sends a notification."""
+    error_message = (
+        "An unhandled exception occurred.\n\n"
+        f"**Update:** `{update}`\n"
+        f"**Error:** `{context.error}`"
+    )
+    print(f"[Critical Error] {error_message}")
+    send_admin_notification(error_message)
 
 
 # --- Main Application Setup ---
 def main():
     """Starts the bot."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Register the global error handler
+    application.add_error_handler(error_handler)
 
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_callback_handler)],
@@ -244,9 +332,38 @@ def main():
                 CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
                 CallbackQueryHandler(done_ai_options, pattern="^done_ai_options$"),
             ],
+            HEADER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_header)],
+            FOOTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_footer)],
+            WATERMARK_FROM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_watermark_from)
+            ],
+            WATERMARK_TO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_watermark_to)
+            ],
             CONFIRMATION: [
                 CallbackQueryHandler(confirm_task, pattern="^confirm_task$"),
                 CallbackQueryHandler(cancel_task, pattern="^cancel_task$"),
+            ],
+            SELECT_TASK: [
+                CallbackQueryHandler(select_task_to_edit, pattern="^select_task_")
+            ],
+            EDIT_MENU: [
+                CallbackQueryHandler(edit_name, pattern="^edit_name$"),
+                CallbackQueryHandler(edit_sources, pattern="^edit_sources$"),
+                CallbackQueryHandler(edit_targets, pattern="^edit_targets$"),
+                CallbackQueryHandler(edit_ai_options, pattern="^edit_ai_options$"),
+                CallbackQueryHandler(done_editing, pattern="^done_editing$"),
+            ],
+            EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_name)],
+            EDIT_SOURCES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_sources)
+            ],
+            EDIT_TARGETS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_targets)
+            ],
+            EDIT_AI_OPTIONS: [
+                CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
+                CallbackQueryHandler(done_editing, pattern="^done_editing$"),
             ],
         },
         fallbacks=[CommandHandler("start", start)],

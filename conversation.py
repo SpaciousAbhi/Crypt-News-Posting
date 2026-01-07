@@ -9,7 +9,18 @@ from menu import main_menu_keyboard, ai_options_keyboard, confirmation_keyboard
 from config import TASKS, save_tasks_to_yaml
 
 # States for the conversation
-NAME, SOURCES, TARGETS, AI_OPTIONS, CONFIRMATION = range(5)
+(
+    NAME,
+    SOURCES,
+    TARGETS,
+    AI_OPTIONS,
+    HEADER,
+    FOOTER,
+    WATERMARK_FROM,
+    WATERMARK_TO,
+    CONFIRMATION,
+) = range(9)
+
 
 async def add_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the conversation to add a new task."""
@@ -18,12 +29,13 @@ async def add_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "summarize": False,
         "header": None,
         "footer": None,
-        "watermark": None,
+        "watermark": {"replace_from": None, "replace_to": None},
     }
     await update.callback_query.edit_message_text(
         "Let's add a new task. First, what is the name of the task?"
     )
     return NAME
+
 
 async def received_task_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives the task name and asks for the source channels."""
@@ -32,6 +44,7 @@ async def received_task_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "Great. Now, please provide the source channel IDs, separated by commas."
     )
     return SOURCES
+
 
 async def received_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives the source channels and asks for the target channels."""
@@ -48,6 +61,7 @@ async def received_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Invalid input. Please provide a comma-separated list of numeric channel IDs."
         )
         return SOURCES
+
 
 async def received_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives the target channels and asks for the AI options."""
@@ -66,6 +80,7 @@ async def received_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return TARGETS
 
+
 async def toggle_ai_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggles an AI option."""
     query = update.callback_query
@@ -78,9 +93,72 @@ async def toggle_ai_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return AI_OPTIONS
 
+
 async def done_ai_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Finishes the AI options selection and asks for confirmation."""
+    """Finishes the AI options selection and asks for the header."""
+    await update.callback_query.edit_message_text(
+        "Please enter the header text, or send 'skip' for no header."
+    )
+    return HEADER
+
+
+async def received_header(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receives the header and asks for the footer."""
+    if update.message.text.lower() != "skip":
+        context.user_data["ai_options"]["header"] = update.message.text
+    await update.message.reply_text(
+        "Please enter the footer text, or send 'skip' for no footer."
+    )
+    return FOOTER
+
+
+async def received_footer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receives the footer and asks for the watermark."""
+    if update.message.text.lower() != "skip":
+        context.user_data["ai_options"]["footer"] = update.message.text
+    await update.message.reply_text(
+        "Please enter the watermark text to be replaced, or send 'skip'."
+    )
+    return WATERMARK_FROM
+
+
+async def received_watermark_from(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Receives the watermark 'from' text and asks for the 'to' text."""
+    if update.message.text.lower() != "skip":
+        context.user_data["ai_options"]["watermark"][
+            "replace_from"
+        ] = update.message.text
+        await update.message.reply_text(
+            "Please enter the new watermark text."
+        )
+        return WATERMARK_TO
+    else:
+        # Skip the watermark and go to confirmation
+        return await show_confirmation(update, context)
+
+
+async def received_watermark_to(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Receives the watermark 'to' text and shows the confirmation."""
+    context.user_data["ai_options"]["watermark"][
+        "replace_to"
+    ] = update.message.text
+    return await show_confirmation(update, context)
+
+
+async def show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Displays the final confirmation message."""
     ai_options = context.user_data["ai_options"]
+    watermark = ai_options["watermark"]
+    watermark_text = (
+        f"'{watermark['replace_from']}' -> '{watermark['replace_to']}'"
+        if watermark["replace_from"] and watermark["replace_to"]
+        else "Not set"
+    )
+
     confirmation_message = (
         "Please confirm the new task:\n\n"
         f"**Name:** {context.user_data['task_name']}\n"
@@ -90,14 +168,24 @@ async def done_ai_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"**Summarize:** {'✅' if ai_options['summarize'] else '❌'}\n"
         f"**Header:** {ai_options['header'] or 'Not set'}\n"
         f"**Footer:** {ai_options['footer'] or 'Not set'}\n"
-        f"**Watermark:** {ai_options['watermark'] or 'Not set'}\n"
+        f"**Watermark:** {watermark_text}\n"
     )
-    await update.callback_query.edit_message_text(
-        confirmation_message,
-        reply_markup=confirmation_keyboard(),
-        parse_mode="Markdown",
-    )
+
+    # Check if this function was called from a query or a message
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            confirmation_message,
+            reply_markup=confirmation_keyboard(),
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            confirmation_message,
+            reply_markup=confirmation_keyboard(),
+            parse_mode="Markdown",
+        )
     return CONFIRMATION
+
 
 async def confirm_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Saves the task."""
@@ -114,6 +202,7 @@ async def confirm_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data.clear()
     return ConversationHandler.END
+
 
 async def cancel_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels the task creation."""

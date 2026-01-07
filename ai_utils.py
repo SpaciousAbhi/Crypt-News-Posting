@@ -1,6 +1,7 @@
 # ai_utils.py
 
 import requests
+from notifications import send_admin_notification
 
 
 def _call_ai_model(prompt: str, groq_api_key: str) -> str:
@@ -19,11 +20,17 @@ def _call_ai_model(prompt: str, groq_api_key: str) -> str:
             "temperature": 0.3,
             "max_tokens": 200,
         }
-        res = requests.post(url, headers=headers, json=payload)
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
         res.raise_for_status()
         return res.json()["choices"][0]["message"]["content"].strip()
     except requests.exceptions.RequestException as e:
-        print(f"[Error] AI model call failed: {e}")
+        error_message = (
+            f"The AI model call failed.\n"
+            f"**Reason:** `{e}`\n\n"
+            "Please check the `GROQ_API_KEY` and network connectivity."
+        )
+        print(f"[Error] {error_message}")
+        send_admin_notification(error_message)
         return None
 
 
