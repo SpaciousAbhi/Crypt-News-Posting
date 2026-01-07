@@ -1,107 +1,392 @@
-import os
-import time
-import sqlite3
-import requests
-import snscrape.modules.twitter as sntwitter
+# main.py
 
-from datetime import datetime, timedelta
+import os
+import sqlite3
 from dotenv import load_dotenv
-from telegram import Bot
-from rapidfuzz import fuzz
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    CallbackQueryHandler,
+    ConversationHandler,
+)
+
+# Import custom modules
+from config import TASKS, save_tasks_to_yaml
+from ai_utils import modify_message
+from menu import main_menu_keyboard, remove_task_keyboard
+from conversation import (
+    NAME,
+    SOURCES,
+    TARGETS,
+    AI_OPTIONS,
+    HEADER,
+    FOOTER,
+    WATERMARK_FROM,
+    WATERMARK_TO,
+    CONFIRMATION,
+    add_task_start,
+    received_task_name,
+    received_sources,
+    received_targets,
+    toggle_ai_option,
+    done_ai_options,
+    received_header,
+    received_footer,
+    received_watermark_from,
+    received_watermark_to,
+    confirm_task,
+    cancel_task,
+)
+from edit_conversation import (
+    SELECT_TASK,
+    EDIT_MENU,
+    EDIT_NAME,
+    EDIT_SOURCES,
+    EDIT_TARGETS,
+    EDIT_AI_OPTIONS,
+    CONFIRM_EDIT,
+    edit_task_start,
+    select_task_to_edit,
+    edit_name,
+    received_new_name,
+    edit_sources,
+    received_new_sources,
+    edit_targets,
+    received_new_targets,
+    edit_ai_options,
+    done_editing,
+)
+from notifications import send_admin_notification
 
 # Load configuration from .env
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-CHANNEL_ID      = os.getenv('TELEGRAM_CHANNEL_ID')
-GROQ_KEY        = os.getenv('GROQ_API_KEY')
-POLL_INTERVAL   = int(os.getenv('POLL_INTERVAL', 300))
-TWITTER_ACCOUNTS = os.getenv('TWITTER_ACCOUNTS', '').split(',')
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
-# Initialize Telegram bot
-bot = Bot(token=TELEGRAM_TOKEN)
-
-# Initialize SQLite cache
-conn = sqlite3.connect('cache.db', check_same_thread=False)
-cur  = conn.cursor()
+# --- Database Initialization ---
+conn = sqlite3.connect("cache.db", check_same_thread=False)
+cur = conn.cursor()
 cur.execute(
     """CREATE TABLE IF NOT EXISTS processed (
-           tweet_id TEXT PRIMARY KEY,
-           summary  TEXT,
+           message_id TEXT PRIMARY KEY,
            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
        )"""
 )
 conn.commit()
 
-DUPLICATE_THRESHOLD = 85
 
-# Groq LLaMA3 summarization
-def llama3_summary(text: str) -> str:
-    prompt = (
-        "Rewrite this tweet as a concise, engaging crypto-news summary "
-        "with relevant emojis to highlight sentiment and key points:\n\n" + text
-    )
-    url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers = {
-        'Authorization': f'Bearer {GROQ_KEY}',
-        'Content-Type': 'application/json'
-    }
-    payload = {
-        'model': 'llama3-70b-8192',
-        'messages': [{'role': 'user', 'content': prompt}],
-        'temperature': 0.3,
-        'max_tokens': 200
-    }
-    res = requests.post(url, headers=headers, json=payload)
-    res.raise_for_status()
-    return res.json()['choices'][0]['message']['content'].strip()
-
-# Cache helpers
-def is_processed(tid: str) -> bool:
-    cur.execute('SELECT 1 FROM processed WHERE tweet_id=?', (tid,))
+# --- Cache Helper Functions ---
+def is_message_processed(message_id: int) -> bool:
+    """Checks if a message_id has already been processed."""
+    cur.execute("SELECT 1 FROM processed WHERE message_id=?", (str(message_id),))
     return cur.fetchone() is not None
 
-def mark_processed(tid: str, summary: str):
+
+def mark_message_as_processed(message_id: int):
+    """Marks a message_id as processed."""
     cur.execute(
-        'INSERT INTO processed (tweet_id, summary) VALUES (?, ?)',
-        (tid, summary)
+        "INSERT INTO processed (message_id) VALUES (?)", (str(message_id),)
     )
     conn.commit()
 
-def is_duplicate(summary: str) -> bool:
-    cur.execute('SELECT summary FROM processed ORDER BY timestamp DESC LIMIT 100')
-    for (old,) in cur.fetchall():
-        if fuzz.token_set_ratio(summary, old) >= DUPLICATE_THRESHOLD:
-            return True
-    return False
 
-# Telegram poster
-def post_to_channel(msg: str):
-    bot.send_message(chat_id=CHANNEL_ID, text=msg, parse_mode='HTML')
+# --- Content Filtering ---
+def should_forward_message(message_text: str, task_filters: dict) -> bool:
+    """Checks if a message should be forwarded based on keywords."""
+    include_keywords = task_filters.get("include_keywords", [])
+    exclude_keywords = task_filters.get("exclude_keywords", [])
 
-# Main polling loop
-last_checked = {
-    acct: datetime.utcnow() - timedelta(seconds=POLL_INTERVAL)
-    for acct in TWITTER_ACCOUNTS
-}
-print(f"Bot started. Polling every {POLL_INTERVAL}s for: {TWITTER_ACCOUNTS}")
+    # If there are include keywords, the message must contain at least one of them
+    if include_keywords and not any(
+        keyword.lower() in message_text.lower() for keyword in include_keywords
+    ):
+        return False
 
-while True:
-    try:
-        for acct in TWITTER_ACCOUNTS:
-            since = last_checked[acct]
-            query = f"from:{acct} since:{since.date()}"
-            for tweet in sntwitter.TwitterSearchScraper(query).get_items():
-                if tweet.date <= since:
-                    continue
-                tid = str(tweet.id)
-                if is_processed(tid):
-                    continue
-                summary = llama3_summary(tweet.content)
-                if is_duplicate(summary):
-                    continue
-                post_to_channel(summary)
-                mark_processed(tid, summary)
-            last_checked[acct] = datetime.utcnow()
-    except Exception as e:
-        print(f"[Error] {e}")
-    time.sleep(POLL_INTERVAL)
+    # If there are exclude keywords, the message must not contain any of them
+    if exclude_keywords and any(
+        keyword.lower() in message_text.lower() for keyword in exclude_keywords
+    ):
+        return False
+
+    return True
+
+
+# --- Telegram Command Handlers ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a welcome message with the main menu."""
+    welcome_text = "👋 **Welcome to the Advanced Forwarding Bot!**\n\n"
+    "Please choose an option from the menu below:"
+
+    # Check if the message is from a callback query
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text=welcome_text,
+            reply_markup=main_menu_keyboard(),
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            text=welcome_text,
+            reply_markup=main_menu_keyboard(),
+            parse_mode="Markdown",
+        )
+    return ConversationHandler.END
+
+
+# --- Callback Query Handler ---
+async def button_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Handles button presses from inline keyboards."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "start":
+        return await start(update, context)
+    elif data == "view_tasks":
+        await view_tasks(query)
+        return ConversationHandler.END
+    elif data == "add_task":
+        return await add_task_start(update, context)
+    elif data == "remove_task":
+        await remove_task(query)
+        return ConversationHandler.END
+    elif data.startswith("delete_task_"):
+        await delete_task(query)
+        return ConversationHandler.END
+    elif data == "edit_task":
+        return await edit_task_start(update, context)
+    elif data.startswith("select_task_"):
+        return await select_task_to_edit(update, context)
+    elif data == "edit_name":
+        return await edit_name(update, context)
+    elif data == "edit_sources":
+        return await edit_sources(update, context)
+    elif data == "edit_targets":
+        return await edit_targets(update, context)
+    elif data == "edit_ai_options":
+        return await edit_ai_options(update, context)
+    elif data == "done_editing":
+        return await done_editing(update, context)
+    elif data == "help":
+        await help_menu(query)
+        return ConversationHandler.END
+    elif data.startswith("toggle_"):
+        return await toggle_ai_option(update, context)
+    elif data == "done_ai_options":
+        return await done_ai_options(update, context)
+    elif data == "confirm_task":
+        return await confirm_task(update, context)
+    elif data == "cancel_task":
+        return await cancel_task(update, context)
+    else:
+        await query.edit_message_text(
+            text=f"Unknown option: {data}",
+            reply_markup=main_menu_keyboard(),
+        )
+        return ConversationHandler.END
+
+
+async def view_tasks(query):
+    """Displays the current tasks."""
+    if not TASKS:
+        await query.edit_message_text(
+            text="No tasks are currently configured.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    status_message = "📊 **Current Tasks**\n\n"
+    for i, task in enumerate(TASKS, 1):
+        task_name = task.get("name", "Unnamed Task")
+        status_message += f"🔹 **Task {i}: {task_name}**\n"
+        sources = ", ".join(map(str, task.get("sources", [])))
+        status_message += f"   - **Sources:** `{sources}`\n"
+        targets = ", ".join(map(str, task.get("targets", [])))
+        status_message += f"   - **Targets:** `{targets}`\n\n"
+
+    await query.edit_message_text(
+        text=status_message,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+async def remove_task(query):
+    """Displays a list of tasks to remove."""
+    if not TASKS:
+        await query.edit_message_text(
+            text="No tasks to remove.", reply_markup=main_menu_keyboard()
+        )
+        return
+    await query.edit_message_text(
+        text="Select a task to remove:", reply_markup=remove_task_keyboard()
+    )
+
+
+async def delete_task(query):
+    """Deletes the selected task."""
+    task_index = int(query.data.split("_")[2])
+    task_name = TASKS[task_index]["name"]
+    del TASKS[task_index]
+    save_tasks_to_yaml()
+    await query.edit_message_text(
+        text=f"Task '{task_name}' has been removed.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+async def help_menu(query):
+    """Displays the help menu."""
+    help_text = (
+        "ℹ️ **How I Work**\n\n"
+        "This bot uses a `config.yaml` file to define 'tasks.' "
+        "Each task specifies source and target channel IDs, and AI options "
+        "for modifying messages.\n\n"
+        "Use the menu to manage your tasks."
+    )
+    await query.edit_message_text(
+        text=help_text,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+# --- Core Message Handling Logic ---
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles new posts from any channel the bot is in."""
+    channel_post = update.channel_post
+    if not channel_post or not channel_post.text:
+        return
+
+    message_id = channel_post.message_id
+    chat_id = channel_post.chat_id
+    message_text = channel_post.text
+
+    if is_message_processed(message_id):
+        return
+
+    for task in TASKS:
+        source_ids = task.get("sources", [])
+        if chat_id in source_ids:
+            # Check if the message should be forwarded
+            if not should_forward_message(message_text, task.get("filters", {})):
+                continue
+
+            targets = task.get("targets", [])
+            ai_options = task.get("ai_options", {})
+            modified_content = modify_message(
+                message_text, ai_options, GROQ_KEY
+            )
+
+            for target_id in targets:
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_id, text=modified_content
+                    )
+                except Exception as e:
+                    error_message = (
+                        f"Failed to send a message to target `{target_id}`.\n"
+                        f"**Reason:** `{e}`\n\n"
+                        "Please ensure the bot is an administrator in the channel."
+                    )
+                    print(f"[Error] {error_message}")
+                    send_admin_notification(error_message)
+
+            mark_message_as_processed(message_id)
+
+
+# --- Error Handler ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Handles all unhandled exceptions and sends a notification."""
+    error_message = (
+        "An unhandled exception occurred.\n\n"
+        f"**Update:** `{update}`\n"
+        f"**Error:** `{context.error}`"
+    )
+    print(f"[Critical Error] {error_message}")
+    send_admin_notification(error_message)
+
+
+# --- Main Application Setup ---
+def main():
+    """Starts the bot."""
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Register the global error handler
+    application.add_error_handler(error_handler)
+
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_callback_handler)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_task_name)],
+            SOURCES: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_sources)],
+            TARGETS: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_targets)],
+            AI_OPTIONS: [
+                CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
+                CallbackQueryHandler(done_ai_options, pattern="^done_ai_options$"),
+            ],
+            HEADER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_header)],
+            FOOTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_footer)],
+            WATERMARK_FROM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_watermark_from)
+            ],
+            WATERMARK_TO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_watermark_to)
+            ],
+            CONFIRMATION: [
+                CallbackQueryHandler(confirm_task, pattern="^confirm_task$"),
+                CallbackQueryHandler(cancel_task, pattern="^cancel_task$"),
+            ],
+            SELECT_TASK: [
+                CallbackQueryHandler(select_task_to_edit, pattern="^select_task_")
+            ],
+            EDIT_MENU: [
+                CallbackQueryHandler(edit_name, pattern="^edit_name$"),
+                CallbackQueryHandler(edit_sources, pattern="^edit_sources$"),
+                CallbackQueryHandler(edit_targets, pattern="^edit_targets$"),
+                CallbackQueryHandler(edit_ai_options, pattern="^edit_ai_options$"),
+                CallbackQueryHandler(done_editing, pattern="^done_editing$"),
+            ],
+            EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_name)],
+            EDIT_SOURCES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_sources)
+            ],
+            EDIT_TARGETS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, received_new_targets)
+            ],
+            EDIT_AI_OPTIONS: [
+                CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
+                CallbackQueryHandler(done_editing, pattern="^done_editing$"),
+            ],
+        },
+        fallbacks=[CommandHandler("start", start)],
+        per_message=False,
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.CHANNEL_POST & filters.TEXT,
+            handle_channel_post,
+        )
+    )
+
+    print("Bot started. Listening for channel posts...")
+    for task in TASKS:
+        task_name = task.get("name", "Unnamed Task")
+        sources = task.get("sources", [])
+        print(f" - Task '{task_name}' running for sources: {sources}")
+
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
