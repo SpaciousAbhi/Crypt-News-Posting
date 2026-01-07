@@ -1,5 +1,6 @@
-rapidfuzz==2.15.2
+rapidfuzz==3.0.0
 requests==2.31.0
-python-telegram-bot==20.3
-snscrape==0.5.0
+python-telegram-bot==20.4
+snscrape==0.6.2
 python-dotenv==1.0.0
+groq==0.4.0

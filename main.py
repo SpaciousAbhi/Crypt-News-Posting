@@ -1,7 +1,8 @@
+# main.py
+
 import os
 import time
 import sqlite3
-import requests
 import snscrape.modules.twitter as sntwitter
 
 from datetime import datetime, timedelta
@@ -9,13 +10,16 @@ from dotenv import load_dotenv
 from telegram import Bot
 from rapidfuzz import fuzz
 
+# Import custom modules
+from config import TASKS
+from ai_utils import modify_message
+
 # Load configuration from .env
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-CHANNEL_ID      = os.getenv('TELEGRAM_CHANNEL_ID')
 GROQ_KEY        = os.getenv('GROQ_API_KEY')
 POLL_INTERVAL   = int(os.getenv('POLL_INTERVAL', 300))
-TWITTER_ACCOUNTS = os.getenv('TWITTER_ACCOUNTS', '').split(',')
+DUPLICATE_THRESHOLD = 85
 
 # Initialize Telegram bot
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -32,30 +36,8 @@ cur.execute(
 )
 conn.commit()
 
-DUPLICATE_THRESHOLD = 85
+# --- Cache Helper Functions ---
 
-# Groq LLaMA3 summarization
-def llama3_summary(text: str) -> str:
-    prompt = (
-        "Rewrite this tweet as a concise, engaging crypto-news summary "
-        "with relevant emojis to highlight sentiment and key points:\n\n" + text
-    )
-    url = 'https://api.groq.com/openai/v1/chat/completions'
-    headers = {
-        'Authorization': f'Bearer {GROQ_KEY}',
-        'Content-Type': 'application/json'
-    }
-    payload = {
-        'model': 'llama3-70b-8192',
-        'messages': [{'role': 'user', 'content': prompt}],
-        'temperature': 0.3,
-        'max_tokens': 200
-    }
-    res = requests.post(url, headers=headers, json=payload)
-    res.raise_for_status()
-    return res.json()['choices'][0]['message']['content'].strip()
-
-# Cache helpers
 def is_processed(tid: str) -> bool:
     cur.execute('SELECT 1 FROM processed WHERE tweet_id=?', (tid,))
     return cur.fetchone() is not None
@@ -74,34 +56,64 @@ def is_duplicate(summary: str) -> bool:
             return True
     return False
 
-# Telegram poster
-def post_to_channel(msg: str):
-    bot.send_message(chat_id=CHANNEL_ID, text=msg, parse_mode='HTML')
+# --- Telegram Helper Function ---
 
-# Main polling loop
-last_checked = {
-    acct: datetime.utcnow() - timedelta(seconds=POLL_INTERVAL)
-    for acct in TWITTER_ACCOUNTS
-}
-print(f"Bot started. Polling every {POLL_INTERVAL}s for: {TWITTER_ACCOUNTS}")
+def post_to_targets(msg: str, targets: list):
+    for channel_id in targets:
+        try:
+            bot.send_message(chat_id=channel_id, text=msg, parse_mode='HTML')
+        except Exception as e:
+            print(f"[Error] Failed to send to {channel_id}: {e}")
+
+# --- Main Polling Loop ---
+
+# Initialize last checked timestamps for all sources across all tasks
+last_checked = {}
+for task in TASKS:
+    for source in task['sources']:
+        if source not in last_checked:
+            last_checked[source] = datetime.utcnow() - timedelta(seconds=POLL_INTERVAL)
+
+print(f"Bot started. Polling every {POLL_INTERVAL}s...")
+for task in TASKS:
+    print(f" - Task '{task['name']}' running for sources: {task['sources']}")
 
 while True:
     try:
-        for acct in TWITTER_ACCOUNTS:
-            since = last_checked[acct]
-            query = f"from:{acct} since:{since.date()}"
-            for tweet in sntwitter.TwitterSearchScraper(query).get_items():
-                if tweet.date <= since:
-                    continue
-                tid = str(tweet.id)
-                if is_processed(tid):
-                    continue
-                summary = llama3_summary(tweet.content)
-                if is_duplicate(summary):
-                    continue
-                post_to_channel(summary)
-                mark_processed(tid, summary)
-            last_checked[acct] = datetime.utcnow()
+        for task in TASKS:
+            sources = task['sources']
+            targets = task['targets']
+            ai_options = task['ai_options']
+
+            for source_acct in sources:
+                since = last_checked[source_acct]
+                query = f"from:{source_acct.lstrip('@')} since:{since.date()}"
+
+                # Scrape tweets
+                for tweet in sntwitter.TwitterSearchScraper(query).get_items():
+                    if tweet.date <= since:
+                        continue
+
+                    tid = str(tweet.id)
+                    if is_processed(tid):
+                        continue
+
+                    # Modify message using AI
+                    modified_content = modify_message(tweet.content, ai_options, GROQ_KEY)
+
+                    if is_duplicate(modified_content):
+                        continue
+
+                    # Post to all target channels for the task
+                    post_to_targets(modified_content, targets)
+
+                    # Mark as processed
+                    mark_processed(tid, modified_content)
+
+                # Update last checked time for this source
+                last_checked[source_acct] = datetime.utcnow()
+
     except Exception as e:
-        print(f"[Error] {e}")
+        print(f"[Error] An unexpected error occurred: {e}")
+
     time.sleep(POLL_INTERVAL)
