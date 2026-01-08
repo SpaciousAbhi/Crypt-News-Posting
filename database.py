@@ -122,4 +122,4 @@ def init_db():
     Creates all the database tables defined in the models.
     This should be run once on initial setup.
     """
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
