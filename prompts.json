@@ -1,0 +1,14 @@
+{
+  "reword": {
+    "1.0": "Rephrase the following text to have a {tone} tone, suitable for an audience of {audience}. Do not add any new information or commentary. Preserve the original meaning and any factual data, like numbers or links.\\n\\nOriginal text:\\n\\\"\\\"\\\"\\n{message_text}\\n\\\"\\\"\\\""
+  },
+  "summarize": {
+    "1.0": {
+      "paragraph": "Summarize the key information in the following text into a {length} paragraph. Focus on the main conclusions and actionable insights.\\n\\nOriginal text:\\n\\\"\\\"\\\"\\n{message_text}\\n\\\"\\\"\\\"",
+      "bullet_points": "Summarize the key information in the following text into a list of {length} bullet points. Each bullet point should be concise and impactful.\\n\\nOriginal text:\\n\\\"\\\"\\\"\\n{message_text}\\n\\\"\\\"\\\""
+    }
+  },
+  "translate": {
+    "1.0": "Translate the following text into {target_language}. Preserve the original formatting, such as line breaks and links, as much as possible.\\n\\nOriginal text:\\n\\\"\\\"\\\"\\n{message_text}\\n\\\"\\\"\\\""
+  }
+}
