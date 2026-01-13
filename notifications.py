@@ -1,17 +1,9 @@
 # notifications.py
 
-import os
 import requests
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
-def send_admin_notification(message: str):
+def send_admin_notification(token: str, admin_id: str, message: str):
     """Synchronously sends a notification message to the admin."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    admin_id = os.getenv("ADMIN_CHAT_ID")
-
     if not admin_id or not token:
         print(
             "[Info] Admin notification not sent "

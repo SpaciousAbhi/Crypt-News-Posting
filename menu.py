@@ -1,7 +1,6 @@
 # menu.py
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from config import TASKS
 
 def main_menu_keyboard():
     """Returns the main menu keyboard."""
@@ -33,28 +32,29 @@ def ai_options_keyboard(options):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def remove_task_keyboard():
+def remove_task_keyboard(tasks):
     """Returns a keyboard with a button for each task to remove."""
     keyboard = []
-    for i, task in enumerate(TASKS):
+    for task in tasks:
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    f"❌ {task['name']}", callback_data=f"delete_task_{i}"
+                    f"❌ {task.name}", callback_data=f"delete_task_{task.id}"
                 )
             ]
         )
     keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="start")])
     return InlineKeyboardMarkup(keyboard)
 
-def edit_task_keyboard():
+
+def edit_task_keyboard(tasks):
     """Returns a keyboard with a button for each task to edit."""
     keyboard = []
-    for i, task in enumerate(TASKS):
+    for task in tasks:
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    f"✏️ {task['name']}", callback_data=f"select_task_{i}"
+                    f"✏️ {task.name}", callback_data=f"select_task_{task.id}"
                 )
             ]
         )

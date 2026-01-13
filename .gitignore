@@ -146,3 +146,4 @@ cython_debug/
 
 # SQLite database
 cache.db
+tasks.db
