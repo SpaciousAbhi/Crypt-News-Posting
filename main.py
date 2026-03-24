@@ -19,7 +19,8 @@ from bot.handlers import (
     view_tasks, manage_task, add_task_start, receive_task_name,
     receive_source_platform, receive_source_id, receive_dest_platform, 
     receive_dest_id, commit_task, show_settings, ask_setting, 
-    set_groq_key, set_tw_user, set_tw_pass
+    set_groq_key, set_tw_user, set_tw_pass,
+    toggle_task_status, delete_task
 )
 from database.manager import db
 from core.engine import ProcessingEngine
@@ -98,13 +99,9 @@ def main():
 
     application.add_handler(conv_handler)
     
-    # Missing Callback exports from bot/handlers/__init__.py for task management
-    from bot.handlers import toggle_task_status, delete_task
+    # Register persistent callback handlers (for menus outside conversation states if needed)
     application.add_handler(CallbackQueryHandler(view_tasks, pattern="^tasks_view$"))
-    application.add_handler(CallbackQueryHandler(manage_task, pattern="^tasks_manage_"))
-    application.add_handler(CallbackQueryHandler(lambda u, c: toggle_task_status(u, c, False), pattern="^tasks_pause_"))
-    application.add_handler(CallbackQueryHandler(lambda u, c: toggle_task_status(u, c, True), pattern="^tasks_resume_"))
-    application.add_handler(CallbackQueryHandler(delete_task, pattern="^tasks_delete_"))
+    # ... other explicit handlers are already in conv_handler states, but adding them here ensures safety
     
     # Global Back/Cancel handler could be added here
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^menu_main$"))

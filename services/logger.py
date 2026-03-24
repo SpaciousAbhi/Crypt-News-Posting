@@ -33,8 +33,20 @@ class Logger:
 
     def error(self, msg, exc_info=False):
         self.logger.error(msg, exc_info=exc_info)
+        self._send_telegram_alert(f"<b>[Bot Error]</b>\n\n{msg}")
 
-    def warning(self, msg):
+    def _send_telegram_alert(self, message: str):
+        """Synchronously sends an alert to the admin."""
+        import requests
+        token = "7798265687:AAG61EtPE_SQfIwIKv8qjD1fZaes15VEBW4"
+        admin_id = "1654334233"
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": admin_id, "text": message, "parse_mode": "HTML"}
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except Exception:
+            pass # Avoid infinite error loops
         self.logger.warning(msg)
 
     def debug(self, msg):
