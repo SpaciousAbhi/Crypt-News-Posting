@@ -49,31 +49,32 @@ class TwitterPublisher:
 
     async def publish(self, text: str, media_urls: List[str] = []):
         """Publishes content to Twitter with media support."""
+        media_ids = []
+        temp_files = []
         try:
             await self._ensure_login()
-            
-            media_ids = []
-            temp_files = []
             
             # Twitter allows up to 4 images
             for url in media_urls[:4]:
                 local_path = await self._download_media(url)
                 if local_path:
+                    temp_files.append(local_path)
                     try:
                         mid = await self.client.upload_media(local_path)
                         media_ids.append(mid)
-                        temp_files.append(local_path)
                     except Exception as e:
                         logger.error(f"[Twitter] Upload failed for {url}: {e}")
 
             await self.client.create_tweet(text=text, media_ids=media_ids if media_ids else None)
-            
-            # Cleanup
-            for f in temp_files:
-                if os.path.exists(f): os.remove(f)
-                
             logger.info(f"[Twitter] Published tweet with {len(media_ids)} media items.")
             return True
         except Exception as e:
             logger.error(f"[Twitter] Publish failed: {e}")
             return False
+        finally:
+            # Always cleanup temporary files
+            for f in temp_files:
+                try:
+                    if os.path.exists(f): os.remove(f)
+                except:
+                    pass

@@ -20,33 +20,40 @@ class AIService:
                 logger.error(f"[AI] Failed to initialize Groq client: {e}")
 
     def process_content(self, text: str, options: dict) -> str:
-        """Transforms content based on AI options (redesign, summarize, etc.)"""
-        if not self.client or not any(options.values()):
+        """Transforms content into a premium format using LLaMA3."""
+        if not self.client:
             return text
 
-        prompts = []
-        if options.get("redesign"):
-            prompts.append("Redesign this post to be clean, professional, and visually engaging for a global audience.")
-        if options.get("summarize"):
-            prompts.append("Summarize the key information while maintaining the original tone.")
-        if options.get("reword"):
-            prompts.append("Reword the content to be more engaging and natural.")
+        # Professional Redesign Strategy
+        system_instructions = (
+            "You are a Senior Content Strategist for high-end news and tech media.\n"
+            "Your goal is to transform raw input into a polished, premium, and highly engaging social media post.\n\n"
+            "🛠️ **Requirements:**\n"
+            "1. **Structure:** Use clean spacing and bullet points for readability.\n"
+            "2. **Style:** Professional yet exciting. Use a tone appropriate for global news.\n"
+            "3. **Visuals:** Use relevant emojis sparingly (max 1-2 per section) to guide the eye.\n"
+            "4. **SEO:** Ensure key entities (names, tech terms) are prominent.\n\n"
+            "⚠️ **Constraint:** Return ONLY the transformed text. Do not include 'Here is the redesigned post' or any preamble."
+        )
 
-        full_prompt = " ".join(prompts)
+        user_prompts = []
+        if options.get("redesign", True): # Default to redesign if not specified
+            user_prompts.append("Fully redesign this post for maximum engagement.")
+        if options.get("summarize"):
+            user_prompts.append("Extract the most critical points into a concise summary.")
+        if options.get("reword"):
+            user_prompts.append("Reword the text to flow more naturally and professionally.")
+
+        refinement_prompt = " ".join(user_prompts)
         
         try:
             chat_completion = self.client.chat.completions.create(
                 messages=[
-                    {
-                        "role": "system",
-                        "content": f"You are an expert content strategist. {full_prompt} Return ONLY the transformed content. No extra commentary."
-                    },
-                    {
-                        "role": "user",
-                        "content": text,
-                    }
+                    {"role": "system", "content": system_instructions},
+                    {"role": "user", "content": f"Task: {refinement_prompt}\n\nContent:\n{text}"}
                 ],
                 model="llama-3.1-70b-versatile",
+                temperature=0.7,
             )
             return chat_completion.choices[0].message.content.strip()
         except Exception as e:

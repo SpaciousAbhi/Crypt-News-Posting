@@ -32,8 +32,17 @@ class Logger:
         self.logger.info(msg)
 
     def error(self, msg, exc_info=False):
+        """Logs error and sends a detailed Telegram alert."""
         self.logger.error(msg, exc_info=exc_info)
-        self._send_telegram_alert(f"<b>[Bot Error]</b>\n\n{msg}")
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        alert_msg = (
+            f"🚨 <b>SYSTEM ERROR DETECTED</b>\n\n"
+            f"⏰ <b>Timestamp:</b> <code>{timestamp}</code>\n"
+            f"📑 <b>Summary:</b>\n<code>{msg}</code>\n\n"
+            "🔍 <i>Please check the Heroku logs for full stack trace.</i>"
+        )
+        self._send_telegram_alert(alert_msg)
 
     def _send_telegram_alert(self, message: str):
         """Synchronously sends an alert to the admin."""

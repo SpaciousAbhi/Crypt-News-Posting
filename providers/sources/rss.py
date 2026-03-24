@@ -20,11 +20,12 @@ class RSSSource:
     """Robust RSS feed monitor with mirror rotation."""
     
     DEFAULT_MIRRORS = [
-        "https://nitter.net", 
-        "https://nitter.cz",
         "https://nitter.privacydev.net",
+        "https://nitter.cz",
+        "https://nitter.moomoo.me",
         "https://nitter.tokhmi.xyz",
-        "https://nitter.moomoo.me"
+        "https://nitter.no-logs.com",
+        "https://nitter.net"
     ]
 
     def __init__(self, mirrors: Optional[List[str]] = None):

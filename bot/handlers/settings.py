@@ -9,7 +9,7 @@ from database.manager import db
 from services.config_service import config
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows the settings menu."""
+    """Shows the settings menu with a professional overview."""
     user_id = update.effective_user.id
     if str(user_id) != str(config.admin_id):
         return ConversationHandler.END
@@ -23,21 +23,37 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
+        msg = (
+            "⚙️ **System Configuration**\n\n"
+            "Manage your core credentials here. These stay securely in your database.\n\n"
+            "🧠 **AI Service:** LLaMA3 redesigns your content.\n"
+            "🐦 **Twitter Service:** Used for fetching & publishing."
+        )
         await query.edit_message_text(
-            "⚙️ **Global Settings**\n\nManage your API keys and Twitter credentials below.",
+            msg,
             reply_markup=Menu.settings_menu(settings_data),
             parse_mode="Markdown"
         )
     return BotState.SETTINGS_MENU
 
 async def ask_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Provides detailed prompts for each setting."""
     query = update.callback_query
     await query.answer()
     
     key_map = {
-        "settings_set_groq": (BotState.SET_GROQ_KEY, "🔑 Please enter your **Groq API Key** (e.g. `gsk_...`):"),
-        "settings_set_tw_user": (BotState.SET_TW_USER, "👤 Please enter your **Twitter Username**:"),
-        "settings_set_tw_pass": (BotState.SET_TW_PASS, "🔒 Please enter your **Twitter Password**:")
+        "settings_set_groq": (
+            BotState.SET_GROQ_KEY, 
+            "🔑 **Groq API Key**\n\nRequired for AI content redesign.\nFind it at `console.groq.com.\n\n**Please enter your key:**"
+        ),
+        "settings_set_tw_user": (
+            BotState.SET_TW_USER, 
+            "👤 **Twitter Account**\n\nProvide the username for login.\n💡 Example: `cryptoking_news`"
+        ),
+        "settings_set_tw_pass": (
+            BotState.SET_TW_PASS, 
+            "🔒 **Twitter Password**\n\nYour password is required for automation.\n🔑 **Enter it now:**"
+        )
     }
     
     next_state, prompt = key_map.get(query.data)

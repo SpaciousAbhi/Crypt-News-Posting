@@ -29,14 +29,26 @@ from services.logger import logger
 
 # --- Command Handlers ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for the bot."""
-    # Ensure only admin can use the bot
+    """Entry point for the bot with rich detailing."""
     admin_id = config.admin_id or "1654334233"
-    if str(update.effective_user.id) != str(admin_id):
+    user = update.effective_user
+    
+    if str(user.id) != str(admin_id):
+        logger.warning(f"Unauthorized access attempt by {user.full_name} ({user.id})")
         return
         
+    welcome_text = (
+        f"👋 **Welcome back, {user.first_name}!**\n\n"
+        "Your **Professional Automation Suite** is active and ready.\n\n"
+        "🚀 **System Overview:**\n"
+        "• **Engine Status:** 🟢 Online & Monitoring\n"
+        "• **AI Model:** LLaMA3 (via Groq)\n"
+        "• **Interval:** 60s Check Cycle\n\n"
+        "Use the menu below to manage your tasks, configure API keys, or view the detailed help guide."
+    )
+    
     await update.message.reply_text(
-        "🚀 **Advanced Automation Bot**\n\nWelcome to your production-grade automation engine.",
+        welcome_text,
         reply_markup=Menu.main_menu(),
         parse_mode="Markdown"
     )
