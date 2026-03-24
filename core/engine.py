@@ -61,6 +61,7 @@ class ProcessingEngine:
         task_id = task['id']
         sources = task['sources']
         destinations = task['destinations']
+        task_config = task.get('config', {})
 
         # 1. Fetch from all sources
         all_new_items = []
@@ -71,13 +72,8 @@ class ProcessingEngine:
             
             items = []
             if platform == "twitter_rss":
-                # Primarily RSS
                 items = self.rss.fetch_latest(identifier)
-            elif platform == "twitter_source":
-                # Fallback to Twikit if configured (would need account settings)
-                # This would be implemented if user provides keys via Settings UI
-                pass
-
+            
             for item in items:
                 if not db.is_item_processed(task_id, source_id, item.id):
                     all_new_items.append((source_id, item))
@@ -85,39 +81,34 @@ class ProcessingEngine:
         if not all_new_items:
             return
 
-        # Sort by timestamp to process chronologically
+        # Sort by timestamp
         all_new_items.sort(key=lambda x: x[1].timestamp)
 
         # 2. Process and Publish
         for source_id, item in all_new_items:
-            logger.info(f"[Engine] New item found for Task {task['name']}: {item.id}")
+            logger.info(f"[Engine] Task {task['name']}: New item {item.id}")
             
-            # AI Transformation
-            # Here we'd get AI options from task config
-            # task['config'] currently not in schema, let's assume ai_options are there
-            ai_options = {} # TODO: Implement task-specific AI options persistence
+            # AI Transformation with task-specific prompt
+            ai_options = task_config.get('ai_options', {})
             processed_text = ai_service.process_content(item.text, ai_options)
             
             # 3. Publish to all destinations
-            success_all = True
             for dest in destinations:
                 dest_platform = dest['platform']
                 dest_id = dest['identifier']
                 
-                if dest_platform == "telegram":
-                    tg_pub = TelegramPublisher(self.bot)
-                    res = await tg_pub.publish(dest_id, processed_text, item.media_urls)
-                    if not res: success_all = False
-                elif dest_platform == "twitter":
-                    # Fetch twitter credentials from Settings
-                    tw_user = db.get_setting("TWITTER_USERNAME")
-                    tw_pass = db.get_setting("TWITTER_PASSWORD")
-                    if tw_user and tw_pass:
-                        tw_pub = TwitterPublisher(tw_user, tw_pass)
-                        res = await tw_pub.publish(processed_text, item.media_urls)
-                        if not res: success_all = False
+                try:
+                    if dest_platform == "telegram":
+                        tg_pub = TelegramPublisher(self.bot)
+                        await tg_pub.publish(dest_id, processed_text, item.media_urls)
+                    elif dest_platform == "twitter":
+                        tw_user = db.get_setting("TWITTER_USERNAME")
+                        tw_pass = db.get_setting("TWITTER_PASSWORD")
+                        if tw_user and tw_pass:
+                            tw_pub = TwitterPublisher(tw_user, tw_pass)
+                            await tw_pub.publish(processed_text, item.media_urls)
+                except Exception as e:
+                    logger.error(f"[Engine] Publication failed for {dest_platform}: {e}")
 
-            # 4. Mark as processed if at least one publication succeeded or skip if failed?
-            # Usually we mark as processed anyway to avoid loops unless it's a transient error
+            # 4. Mark as processed
             db.mark_item_processed(task_id, source_id, item.id)
-            logger.info(f"[Engine] Marked item {item.id} as processed for task {task['name']}")

@@ -52,12 +52,18 @@ class RSSSource:
                     # Extract ID from link or entry.id
                     item_id = self._extract_id_from_link(entry.link) or entry.id
                     
+                    # Clean up text
+                    text = self._sanitize_text(entry.title)
+                    if not text and hasattr(entry, 'description'):
+                        text = self._sanitize_text(entry.description)
+                    
                     # Extract media (images/videos)
-                    media_urls = self._extract_media(entry.description, mirror)
+                    desc = getattr(entry, 'description', '')
+                    media_urls = self._extract_media(desc, mirror)
                     
                     items.append(SourceItem(
                         id=item_id,
-                        text=entry.title,
+                        text=text,
                         media_urls=media_urls,
                         author=identifier,
                         url=entry.link,
@@ -80,9 +86,22 @@ class RSSSource:
         match = re.search(r"/status/(\d+)", link)
         return match.group(1) if match else None
 
+    def _sanitize_text(self, text: str) -> str:
+        """Strips HTML tags and simplifies text."""
+        if not text: return ""
+        # Remove HTML tags
+        clean = re.sub(r'<[^>]+>', '', text)
+        # Decode entities (basic)
+        clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        return clean.strip()
+
     def _extract_media(self, description: str, mirror: str) -> List[str]:
         """Extracts media URLs from the HTML description."""
-        # Find <img> and <video> tags
+        # Find <img> and <source>/<video> tags
         img_urls = re.findall(r'<img src="([^"]+)"', description)
-        # Fix relative URLs
-        return [url if url.startswith("http") else f"{mirror}{url}" for url in img_urls]
+        video_urls = re.findall(r'<source src="([^"]+)"', description)
+        poster_urls = re.findall(r'poster="([^"]+)"', description)
+        
+        all_urls = img_urls + video_urls + poster_urls
+        # Fix relative URLs and remove duplicates
+        return list(set([url if url.startswith("http") else f"{mirror}{url}" for url in all_urls]))

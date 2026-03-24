@@ -65,12 +65,16 @@ def main():
 
     # 2. Define Main ConversationHandler
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start_command)],
+        entry_points=[
+            CommandHandler("start", start_command),
+            CommandHandler("help", show_help)
+        ],
         states={
             BotState.START: [
                 CallbackQueryHandler(view_tasks, pattern="^tasks_view$"),
                 CallbackQueryHandler(add_task_start, pattern="^tasks_add$"),
                 CallbackQueryHandler(show_settings, pattern="^settings_view$"),
+                CallbackQueryHandler(show_help, pattern="^help_view$"),
                 CallbackQueryHandler(manage_task, pattern="^tasks_manage_"),
                 CallbackQueryHandler(lambda u, c: toggle_task_status(u, c, False), pattern="^tasks_pause_"),
                 CallbackQueryHandler(lambda u, c: toggle_task_status(u, c, True), pattern="^tasks_resume_"),
@@ -93,18 +97,19 @@ def main():
             BotState.SET_TW_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_tw_user)],
             BotState.SET_TW_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_tw_pass)],
         },
-        fallbacks=[CommandHandler("start", start_command)],
+        fallbacks=[
+            CommandHandler("cancel", cancel_creation),
+            CommandHandler("start", start_command),
+            CallbackQueryHandler(main_menu_callback, pattern="^menu_main$")
+        ],
         allow_reentry=True
     )
 
     application.add_handler(conv_handler)
     
-    # Register persistent callback handlers (for menus outside conversation states if needed)
-    application.add_handler(CallbackQueryHandler(view_tasks, pattern="^tasks_view$"))
-    # ... other explicit handlers are already in conv_handler states, but adding them here ensures safety
-    
-    # Global Back/Cancel handler could be added here
+    # Global handlers for navigation safety
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^menu_main$"))
+    application.add_handler(CallbackQueryHandler(show_help, pattern="^help_view$"))
 
     # 3. Initialize Background Engine
     engine = ProcessingEngine(token)

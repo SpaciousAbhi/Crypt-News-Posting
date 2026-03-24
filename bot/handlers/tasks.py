@@ -103,10 +103,43 @@ async def receive_source_platform(update: Update, context: ContextTypes.DEFAULT_
     await query.edit_message_text(f"Please provide the {prompt}", parse_mode="Markdown")
     return BotState.ENTER_SOURCE_ID
 
+import re
+
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shows detailed help information."""
+    help_text = (
+        "📖 **Advanced Automation Bot Help**\n\n"
+        "This bot monitors content sources and publishes them to your chosen destinations using AI redesign.\n\n"
+        "🔹 **How to Use:**\n"
+        "1. Go to **Settings** and set your Groq API Key and Twitter credentials.\n"
+        "2. Go to **Tasks** -> **New Task**.\n"
+        "3. Enter a task name (e.g., 'Crypto News').\n"
+        "4. Select a **Source** (e.g., Twitter RSS).\n"
+        "5. Enter the identifier (e.g., `@elonmusk`).\n"
+        "6. Select a **Destination** (e.g., Telegram).\n"
+        "7. Enter the receiving ID (e.g., your Channel `-100...`).\n"
+        "8. **Confirm** and you're done!\n\n"
+        "⚙️ **Processing:** The engine checks for updates every 60 seconds. Each post is redesigned by LLaMA3 before being published."
+    )
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text(help_text, reply_markup=Menu.main_menu(), parse_mode="Markdown")
+    else:
+        await update.message.reply_text(help_text, reply_markup=Menu.main_menu(), parse_mode="Markdown")
+    return ConversationHandler.END
+
 async def receive_source_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the source ID and asks for destination platform."""
-    context.user_data['new_source_id'] = update.message.text
+    """Receives and validates source ID."""
+    source_id = update.message.text.strip()
+    platform = context.user_data.get('new_source_platform')
     
+    # Validation
+    if platform == "twitter_rss" and not re.match(r"^@?[\w]{1,15}$", source_id):
+        await update.message.reply_text("❌ Invalid Twitter username. Please enter a valid name (e.g. @elonmusk):")
+        return BotState.ENTER_SOURCE_ID
+        
+    context.user_data['new_source_id'] = source_id
     await update.message.reply_text(
         "🚀 **Destination Platform**\n\nWhere should the content be published?",
         reply_markup=Menu.platform_selection("dest"),
@@ -122,13 +155,21 @@ async def receive_dest_platform(update: Update, context: ContextTypes.DEFAULT_TY
     platform = query.data.split("_")[1]
     context.user_data['new_dest_platform'] = platform
     
-    prompt = "🐦 Twitter username (reposting):" if platform == "twitter" else "✈️ Telegram Channel/Group ID:"
+    prompt = "🐦 Twitter username (reposting):" if platform == "twitter" else "✈️ Telegram Channel/Group ID (e.g. -100...):"
     await query.edit_message_text(f"Please provide the {prompt}")
     return BotState.ENTER_DEST_ID
 
 async def receive_dest_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the dest ID and asks for confirmation."""
-    context.user_data['new_dest_id'] = update.message.text
+    """Receives and validates destination ID."""
+    dest_id = update.message.text.strip()
+    platform = context.user_data.get('new_dest_platform')
+    
+    # Simple validation for Telegram
+    if platform == "telegram" and not (dest_id.startswith("-100") or dest_id.startswith("@")):
+        await update.message.reply_text("⚠️ Warning: Telegram destination should usually be a Channel ID (`-100...`) or `@username`. Please re-enter if unsure:")
+        # We don't block here as it could be a user ID, just warn.
+        
+    context.user_data['new_dest_id'] = dest_id
     
     summary = (
         f"📝 **Task Summary**\n\n"
@@ -143,6 +184,18 @@ async def receive_dest_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return BotState.CONFIRM_TASK
+
+async def cancel_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancels the conversation."""
+    query = update.callback_query
+    if query: await query.answer()
+    
+    text = "❌ Task creation cancelled."
+    if query:
+        await query.edit_message_text(text, reply_markup=Menu.main_menu())
+    else:
+        await update.message.reply_text(text, reply_markup=Menu.main_menu())
+    return ConversationHandler.END
 
 async def commit_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Saves the task to the database."""

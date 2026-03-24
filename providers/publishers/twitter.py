@@ -30,20 +30,49 @@ class TwitterPublisher:
             logger.error(f"[Twitter] Login failed: {e}")
             raise
 
+    async def _download_media(self, url: str) -> Optional[str]:
+        """Downloads media to a temporary file."""
+        import httpx
+        import tempfile
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=10)
+                if resp.status_code == 200:
+                    ext = url.split(".")[-1].split("?")[0] or "jpg"
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
+                    temp_file.write(resp.content)
+                    temp_file.close()
+                    return temp_file.name
+        except Exception as e:
+            logger.error(f"[Twitter] Download failed for {url}: {e}")
+        return None
+
     async def publish(self, text: str, media_urls: List[str] = []):
-        """Publishes content to Twitter."""
+        """Publishes content to Twitter with media support."""
         try:
             await self._ensure_login()
             
             media_ids = []
-            for url in media_urls[:4]: # Twitter limit
-                # We'd need to download the media locally first to upload it
-                # For now, let's keep it simple or implement a quick downloader
-                # await self.client.upload_media(local_file)
-                pass # TODO: Download and upload media logic
-                
+            temp_files = []
+            
+            # Twitter allows up to 4 images
+            for url in media_urls[:4]:
+                local_path = await self._download_media(url)
+                if local_path:
+                    try:
+                        mid = await self.client.upload_media(local_path)
+                        media_ids.append(mid)
+                        temp_files.append(local_path)
+                    except Exception as e:
+                        logger.error(f"[Twitter] Upload failed for {url}: {e}")
+
             await self.client.create_tweet(text=text, media_ids=media_ids if media_ids else None)
-            logger.info("[Twitter] Successfully published tweet.")
+            
+            # Cleanup
+            for f in temp_files:
+                if os.path.exists(f): os.remove(f)
+                
+            logger.info(f"[Twitter] Published tweet with {len(media_ids)} media items.")
             return True
         except Exception as e:
             logger.error(f"[Twitter] Publish failed: {e}")

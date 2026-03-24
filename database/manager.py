@@ -42,10 +42,11 @@ class DatabaseManager:
             
             # Tasks
             """CREATE TABLE IF NOT EXISTS tasks (
-                id SERIAL PRIMARY KEY, -- SQLite uses INTEGER PRIMARY KEY AUTOINCREMENT
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 user_id BIGINT NOT NULL,
                 is_active BOOLEAN DEFAULT TRUE,
+                config TEXT, -- Task-specific JSON config
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )""" if self.is_postgres else 
             """CREATE TABLE IF NOT EXISTS tasks (
@@ -53,6 +54,7 @@ class DatabaseManager:
                 name TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
                 is_active BOOLEAN DEFAULT 1,
+                config TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )""",
             
@@ -159,22 +161,39 @@ class DatabaseManager:
         return row['value'] if row else None
 
     # --- Task Management ---
-    def create_task(self, name: str, user_id: int) -> int:
+    def create_task(self, name: str, user_id: int, config: Dict[str, Any] = {}) -> int:
         conn, cursor = self._get_connection()
         try:
             placeholder = "%s" if self.is_postgres else "?"
-            query = f"INSERT INTO tasks (name, user_id) VALUES ({placeholder}, {placeholder})"
+            query = f"INSERT INTO tasks (name, user_id, config) VALUES ({placeholder}, {placeholder}, {placeholder})"
             if self.is_postgres:
                 query += " RETURNING id"
-                cursor.execute(query, (name, user_id))
+                cursor.execute(query, (name, user_id, json.dumps(config)))
                 task_id = cursor.fetchone()['id']
             else:
-                cursor.execute(query, (name, user_id))
+                cursor.execute(query, (name, user_id, json.dumps(config)))
                 task_id = cursor.lastrowid
             conn.commit()
             return task_id
         finally:
             conn.close()
+
+    def update_task(self, task_id: int, updates: Dict[str, Any]):
+        """Updates task fields (name, config, is_active)."""
+        if not updates:
+            return
+            
+        fields = []
+        params = []
+        for k, v in updates.items():
+            if k == 'config':
+                v = json.dumps(v)
+            fields.append(f"{k} = %s")
+            params.append(v)
+        
+        params.append(task_id)
+        query = f"UPDATE tasks SET {', '.join(fields)} WHERE id = %s"
+        self.execute(query, tuple(params))
 
     def get_tasks(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         if user_id:
@@ -203,6 +222,7 @@ class DatabaseManager:
         if not task:
             return None
         
+        task['config'] = json.loads(task['config']) if task['config'] else {}
         task['sources'] = self.fetch_all("SELECT * FROM sources WHERE task_id = %s", (task_id,))
         task['destinations'] = self.fetch_all("SELECT * FROM destinations WHERE task_id = %s", (task_id,))
         
