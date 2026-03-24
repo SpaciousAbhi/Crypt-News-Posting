@@ -3,7 +3,7 @@
 import os
 from twikit import Client
 from services.logger import logger
-from typing import List
+from typing import List, Optional
 
 class TwitterPublisher:
     def __init__(self, username: str, password: str, cookies_path: str = "cookies_tw.json"):
