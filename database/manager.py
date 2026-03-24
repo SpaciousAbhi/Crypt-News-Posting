@@ -114,6 +114,16 @@ class DatabaseManager:
         try:
             for query in queries:
                 cursor.execute(query)
+            
+            # Migration: Add config column to tasks if missing
+            try:
+                if self.is_postgres:
+                    cursor.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS config TEXT")
+                else:
+                    cursor.execute("ALTER TABLE tasks ADD COLUMN config TEXT")
+            except:
+                pass # Already exists or other error handled gracefully
+                
             conn.commit()
         finally:
             conn.close()
@@ -222,7 +232,10 @@ class DatabaseManager:
         if not task:
             return None
         
-        task['config'] = json.loads(task['config']) if task['config'] else {}
+        # Resilient access to avoid KeyError during migration
+        cfg_str = task.get('config')
+        task['config'] = json.loads(cfg_str) if cfg_str else {}
+        
         task['sources'] = self.fetch_all("SELECT * FROM sources WHERE task_id = %s", (task_id,))
         task['destinations'] = self.fetch_all("SELECT * FROM destinations WHERE task_id = %s", (task_id,))
         

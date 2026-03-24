@@ -47,6 +47,8 @@ class Logger:
             requests.post(url, json=payload, timeout=5)
         except Exception:
             pass # Avoid infinite error loops
+
+    def warning(self, msg):
         self.logger.warning(msg)
 
     def debug(self, msg):
