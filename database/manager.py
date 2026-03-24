@@ -42,7 +42,7 @@ class DatabaseManager:
             
             # Tasks
             """CREATE TABLE IF NOT EXISTS tasks (
-                id SERIAL PRIMARY KEY if not exists, -- SQLite uses INTEGER PRIMARY KEY AUTOINCREMENT
+                id SERIAL PRIMARY KEY, -- SQLite uses INTEGER PRIMARY KEY AUTOINCREMENT
                 name TEXT NOT NULL,
                 user_id BIGINT NOT NULL,
                 is_active BOOLEAN DEFAULT TRUE,
@@ -58,7 +58,7 @@ class DatabaseManager:
             
             # Sources
             """CREATE TABLE IF NOT EXISTS sources (
-                id SERIAL PRIMARY KEY if not exists,
+                id SERIAL PRIMARY KEY,
                 task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
                 platform TEXT NOT NULL,
                 identifier TEXT NOT NULL,
@@ -76,7 +76,7 @@ class DatabaseManager:
             
             # Destinations
             """CREATE TABLE IF NOT EXISTS destinations (
-                id SERIAL PRIMARY KEY if not exists,
+                id SERIAL PRIMARY KEY,
                 task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
                 platform TEXT NOT NULL,
                 identifier TEXT NOT NULL,
