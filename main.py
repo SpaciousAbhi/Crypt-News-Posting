@@ -125,7 +125,12 @@ def main():
     loop = asyncio.get_event_loop()
     loop.create_task(start_engine())
     
-    application.run_polling()
+    application.run_polling(
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30
+    )
 
 if __name__ == "__main__":
     main()
