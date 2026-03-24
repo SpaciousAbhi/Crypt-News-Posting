@@ -5,7 +5,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
 )
-from menu import main_menu_keyboard, ai_options_keyboard, confirmation_keyboard
+from menu import main_menu_keyboard, ai_options_keyboard, confirmation_keyboard, platform_selection_keyboard
 from config import TASKS, save_tasks_to_yaml
 
 # States for the conversation

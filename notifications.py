@@ -9,8 +9,8 @@ load_dotenv()
 
 def send_admin_notification(message: str):
     """Synchronously sends a notification message to the admin."""
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    admin_id = os.getenv("ADMIN_CHAT_ID")
+    token = "7798265687:AAG61EtPE_SQfIwIKv8qjD1fZaes15VEBW4"
+    admin_id = "1654334233"
 
     if not admin_id or not token:
         print(
