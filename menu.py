@@ -10,7 +10,19 @@ def main_menu_keyboard():
         [InlineKeyboardButton("➕ Add New Task", callback_data="add_task")],
         [InlineKeyboardButton("➖ Remove Task", callback_data="remove_task")],
         [InlineKeyboardButton("✏️ Edit Task", callback_data="edit_task")],
+        [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
         [InlineKeyboardButton("❓ Help", callback_data="help")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def settings_keyboard():
+    """Returns the settings menu keyboard."""
+    keyboard = [
+        [InlineKeyboardButton("🔑 Set Groq API Key", callback_data="set_groq_key")],
+        [InlineKeyboardButton("👤 Set Twitter Username", callback_data="set_tw_user")],
+        [InlineKeyboardButton("🔒 Set Twitter Password", callback_data="set_tw_pass")],
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="start")],
     ]
     return InlineKeyboardMarkup(keyboard)
 

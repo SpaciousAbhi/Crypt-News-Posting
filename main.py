@@ -69,11 +69,14 @@ from edit_conversation import (
 )
 from notifications import send_admin_notification
 
+# Global States for Key Configuration
+SET_GROQ, SET_TW_USER, SET_TW_PASS = range(30, 33)
+
 # Load configuration from .env
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = "7798265687:AAG61EtPE_SQfIwIKv8qjD1fZaes15VEBW4"
 GROQ_KEY = os.getenv("GROQ_API_KEY")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+ADMIN_CHAT_ID = "1654334233"
 
 from database import db
 
@@ -101,8 +104,10 @@ async def twitter_monitor_job(context: ContextTypes.DEFAULT_TYPE):
     tw_monitor = None
     tw_publisher = None
     
-    tw_user = os.getenv("TWITTER_USERNAME")
-    tw_pass = os.getenv("TWITTER_PASSWORD")
+    # Dynamic Keys from Database (Fallback to Env)
+    tw_user = db.get_config("TWITTER_USERNAME") or os.getenv("TWITTER_USERNAME")
+    tw_pass = db.get_config("TWITTER_PASSWORD") or os.getenv("TWITTER_PASSWORD")
+    groq_api_key = db.get_config("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 
     telegram_pub = TelegramPublisher(context.bot)
 
@@ -145,8 +150,8 @@ async def twitter_monitor_job(context: ContextTypes.DEFAULT_TYPE):
                 
                 print(f"[Job] Found new tweet from {source_id}: {tweet.id}")
                 
-                # Redesign content
-                modified_text = modify_message(tweet.text, ai_options, GROQ_KEY)
+                # Redesign content (Using dynamic key)
+                modified_text = modify_message(tweet.text, ai_options, groq_api_key)
                 
                 # Publish to destinations
                 targets = task.get("targets", [])
@@ -209,6 +214,48 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown",
         )
+    return ConversationHandler.END
+
+
+async def received_groq_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the Groq API key input."""
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return
+    key = update.message.text
+    db.set_config("GROQ_API_KEY", key)
+    from menu import settings_keyboard
+    await update.message.reply_text(
+        "✅ Groq API Key saved successfully!",
+        reply_markup=settings_keyboard()
+    )
+    return ConversationHandler.END
+
+
+async def received_tw_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the Twitter username input."""
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return
+    user = update.message.text
+    db.set_config("TWITTER_USERNAME", user)
+    from menu import settings_keyboard
+    await update.message.reply_text(
+        "✅ Twitter Username saved successfully!",
+        reply_markup=settings_keyboard()
+    )
+    return ConversationHandler.END
+
+
+async def received_tw_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the Twitter password input."""
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return
+    pwd = update.message.text
+    db.set_config("TWITTER_PASSWORD", pwd)
+    from menu import settings_keyboard
+    await update.message.reply_text(
+        "✅ Twitter Password saved successfully!",
+        reply_markup=settings_keyboard()
+    )
     return ConversationHandler.END
 
 
@@ -282,6 +329,24 @@ async def button_callback_handler(
             parse_mode="Markdown"
         )
         return ConversationHandler.END
+    elif data == "settings":
+        from menu import settings_keyboard
+        await query.edit_message_text(
+            "⚙️ **Global Settings**\n\n"
+            "Configure your API keys and credentials here. These settings apply to all tasks.",
+            reply_markup=settings_keyboard(),
+            parse_mode="Markdown"
+        )
+        return ConversationHandler.END
+    elif data == "set_groq_key":
+        await query.edit_message_text("🔑 Please send your **Groq API Key**:")
+        return SET_GROQ
+    elif data == "set_tw_user":
+        await query.edit_message_text("👤 Please send your **Twitter Username**:")
+        return SET_TW_USER
+    elif data == "set_tw_pass":
+        await query.edit_message_text("🔒 Please send your **Twitter Password**:")
+        return SET_TW_PASS
     elif data == "help":
         await help_menu(query)
         return ConversationHandler.END
@@ -372,6 +437,11 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     if is_message_processed(message_id):
         return
 
+    # Dynamic Keys from Database (Fallback to Env)
+    tw_user = db.get_config("TWITTER_USERNAME") or os.getenv("TWITTER_USERNAME")
+    tw_pass = db.get_config("TWITTER_PASSWORD") or os.getenv("TWITTER_PASSWORD")
+    groq_api_key = db.get_config("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+
     for task in TASKS:
         sources = task.get("sources", [])
         # Check if any source matches this Telegram channel
@@ -388,13 +458,11 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             ai_options = task.get("ai_options", {})
             modified_content = modify_message(
-                message_text, ai_options, GROQ_KEY
+                message_text, ai_options, groq_api_key
             )
 
             from publishers import TelegramPublisher, TwitterPublisher
             telegram_pub = TelegramPublisher(context.bot)
-            tw_user = os.getenv("TWITTER_USERNAME")
-            tw_pass = os.getenv("TWITTER_PASSWORD")
             tw_publisher = None
 
             targets = task.get("targets", [])
@@ -411,6 +479,41 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
                         await tw_publisher.publish(modified_content, [])
 
             mark_message_as_processed(message_id)
+
+
+async def set_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command to set global API keys."""
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "Usage: `/set_keys <key> <value>`\n\n"
+            "Supported keys:\n"
+            "- `GROQ`: Groq API Key\n"
+            "- `TWITTER_USER`: Twitter Username\n"
+            "- `TWITTER_PASS`: Twitter Password",
+            parse_mode="Markdown"
+        )
+        return
+
+    key_type = args[0].upper()
+    value = args[1]
+
+    db_key = None
+    if key_type == "GROQ":
+        db_key = "GROQ_API_KEY"
+    elif key_type == "TWITTER_USER":
+        db_key = "TWITTER_USERNAME"
+    elif key_type == "TWITTER_PASS":
+        db_key = "TWITTER_PASSWORD"
+
+    if db_key:
+        db.set_config(db_key, value)
+        await update.message.reply_text(f"✅ Successfully set `{key_type}`.")
+    else:
+        await update.message.reply_text("❌ Unknown key type. Use `GROQ`, `TWITTER_USER`, or `TWITTER_PASS`.")
 
 
 # --- Error Handler ---
@@ -484,12 +587,16 @@ def main():
                 CallbackQueryHandler(toggle_ai_option, pattern="^toggle_"),
                 CallbackQueryHandler(done_editing, pattern="^done_editing$"),
             ],
+            SET_GROQ: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_groq_key)],
+            SET_TW_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_tw_user)],
+            SET_TW_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_tw_pass)],
         },
         fallbacks=[CommandHandler("start", start)],
         per_message=False,
     )
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("set_keys", set_keys))
     application.add_handler(conv_handler)
     application.add_handler(
         MessageHandler(

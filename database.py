@@ -150,5 +150,22 @@ class Database:
                 (task_id, source_id, str(last_id))
             )
 
+    def set_config(self, key: str, value: str):
+        if self.is_postgres:
+            self.execute(
+                "INSERT INTO bot_config (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (key, value)
+            )
+        else:
+            self.execute(
+                "INSERT OR REPLACE INTO bot_config (key, value) VALUES (?, ?)",
+                (key, value)
+            )
+
+    def get_config(self, key: str) -> Optional[str]:
+        result = self.fetchone("SELECT value FROM bot_config WHERE key = %s", (key,))
+        return result[0] if result else None
+
 # Global instance
 db = Database()
