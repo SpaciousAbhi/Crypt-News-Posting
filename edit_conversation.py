@@ -9,7 +9,7 @@ from menu import main_menu_keyboard, ai_options_keyboard
 from config import TASKS, save_tasks_to_yaml
 
 # States for the conversation
-SELECT_TASK, EDIT_MENU, EDIT_NAME, EDIT_SOURCES, EDIT_TARGETS, EDIT_AI_OPTIONS, CONFIRM_EDIT = range(7)
+SELECT_TASK, EDIT_MENU, EDIT_NAME, EDIT_SOURCES, EDIT_TARGETS, EDIT_AI_OPTIONS, CONFIRM_EDIT = range(20, 27)
 
 async def edit_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the conversation to edit a new task."""

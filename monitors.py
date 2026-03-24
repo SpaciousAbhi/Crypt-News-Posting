@@ -17,7 +17,13 @@ class TweetData:
 class RSSMonitor:
     """Monitors Tweet updates via Nitter RSS feeds."""
     
-    def __init__(self, nitter_instances: List[str] = ["https://nitter.net"]):
+    def __init__(self, nitter_instances: List[str] = [
+        "https://nitter.net", 
+        "https://nitter.cz",
+        "https://nitter.privacydev.net",
+        "https://nitter.tokhmi.xyz",
+        "https://nitter.moomoo.me"
+    ]):
         self.nitter_instances = nitter_instances
 
     def fetch_latest_tweets(self, username: str) -> List[TweetData]:
@@ -85,5 +91,9 @@ class TwitterMonitor:
                 ))
             return tweet_list
         except Exception as e:
-            print(f"[Error] Twikit fetch failed: {e}")
+            err_msg = str(e)
+            if "KEY_BYTE" in err_msg:
+                print(f"[Error] Twikit fetch failed: Account access restricted or session expired ({err_msg}). Please check credentials or try again later.")
+            else:
+                print(f"[Error] Twikit fetch failed: {e}")
             return []
