@@ -47,17 +47,20 @@ def modify_message(text: str, options: dict, groq_api_key: str) -> str:
         if from_text and to_text:
             modified_text = modified_text.replace(from_text, to_text)
 
-    # AI-based rewording or summarization
-    if options.get("reword"):
+    # AI-based rewording, summarization, or redesign
+    if options.get("redesign"):
         prompt = (
-            "Rewrite this text for clarity and engagement, while preserving "
-            "the core meaning. Add relevant emojis to enhance tone:\n\n"
+            "Rewrite this tweet in a clean, engaging format. "
+            "Keep the meaning exactly the same. Remove clutter (like hashtags or long URLs). "
+            "Make it more readable and professional while keeping a punchy tone. "
+            "Add relevant emojis if they enhance the message:\n\n"
             f'"{modified_text}"'
         )
         ai_result = _call_ai_model(prompt, groq_api_key)
         if ai_result:
             modified_text = ai_result
-    elif options.get("summarize"):
+    elif options.get("reword"):
+        # ... (rest of the file remains the same)
         length = options.get("summary_length", 100)
         prompt = (
             f"Summarize the following text in under {length} words, "

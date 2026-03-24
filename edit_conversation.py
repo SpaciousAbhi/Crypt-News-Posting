@@ -58,54 +58,74 @@ async def received_new_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return EDIT_MENU
 
 async def edit_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Asks for the new sources."""
-    await update.callback_query.edit_message_text("Please enter the new source channel IDs, separated by commas.")
+    """Starts editing sources by asking for platform."""
+    from menu import platform_selection_keyboard
+    await update.callback_query.edit_message_text(
+        "Select the **new source** platform:",
+        reply_markup=platform_selection_keyboard("edit_source_"),
+        parse_mode="Markdown"
+    )
+    return EDIT_SOURCES
+
+async def received_edit_source_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stores the platform and asks for the identifier."""
+    query = update.callback_query
+    await query.answer()
+    platform = query.data.split("_")[2]
+    context.user_data["edit_source_platform"] = platform
+    prompt = "Twitter username:" if platform == "twitter" else "Telegram Channel ID:"
+    await query.edit_message_text(f"Please provide the {prompt}")
     return EDIT_SOURCES
 
 async def received_new_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the new sources."""
+    """Receives the new source identifier."""
     from menu import edit_options_keyboard
-    try:
-        context.user_data["task"]["sources"] = [
-            int(x.strip()) for x in update.message.text.split(",")
-        ]
-        await update.message.reply_text(
-            f"Sources updated to: **{context.user_data['task']['sources']}**\n\n"
-            "What else would you like to edit?",
-            reply_markup=edit_options_keyboard(),
-            parse_mode="Markdown",
-        )
-        return EDIT_MENU
-    except ValueError:
-        await update.message.reply_text(
-            "Invalid input. Please provide a comma-separated list of numeric channel IDs."
-        )
-        return EDIT_SOURCES
+    platform = context.user_data.get("edit_source_platform", "twitter")
+    text = update.message.text.strip()
+    
+    context.user_data["task"]["sources"] = [{"platform": platform, "identifier": text if platform == "twitter" else int(text)}]
+    
+    await update.message.reply_text(
+        "Sources updated! What else would you like to edit?",
+        reply_markup=edit_options_keyboard(),
+        parse_mode="Markdown",
+    )
+    return EDIT_MENU
 
 async def edit_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Asks for the new targets."""
-    await update.callback_query.edit_message_text("Please enter the new target channel IDs, separated by commas.")
+    """Starts editing targets by asking for platform."""
+    from menu import platform_selection_keyboard
+    await update.callback_query.edit_message_text(
+        "Select the **new destination** platform:",
+        reply_markup=platform_selection_keyboard("edit_target_"),
+        parse_mode="Markdown"
+    )
+    return EDIT_TARGETS
+
+async def received_edit_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stores the platform and asks for the identifier."""
+    query = update.callback_query
+    await query.answer()
+    platform = query.data.split("_")[2]
+    context.user_data["edit_target_platform"] = platform
+    prompt = "Twitter username:" if platform == "twitter" else "Telegram Channel ID:"
+    await query.edit_message_text(f"Please provide the {prompt}")
     return EDIT_TARGETS
 
 async def received_new_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the new targets."""
+    """Receives the new target identifier."""
     from menu import edit_options_keyboard
-    try:
-        context.user_data["task"]["targets"] = [
-            int(x.strip()) for x in update.message.text.split(",")
-        ]
-        await update.message.reply_text(
-            f"Targets updated to: **{context.user_data['task']['targets']}**\n\n"
-            "What else would you like to edit?",
-            reply_markup=edit_options_keyboard(),
-            parse_mode="Markdown",
-        )
-        return EDIT_MENU
-    except ValueError:
-        await update.message.reply_text(
-            "Invalid input. Please provide a comma-separated list of numeric channel IDs."
-        )
-        return EDIT_TARGETS
+    platform = context.user_data.get("edit_target_platform", "twitter")
+    text = update.message.text.strip()
+    
+    context.user_data["task"]["targets"] = [{"platform": platform, "identifier": text if platform == "twitter" else int(text)}]
+    
+    await update.message.reply_text(
+        "Targets updated! What else would you like to edit?",
+        reply_markup=edit_options_keyboard(),
+        parse_mode="Markdown",
+    )
+    return EDIT_MENU
 
 async def edit_ai_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the AI options editing."""

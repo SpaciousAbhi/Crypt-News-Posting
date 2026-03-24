@@ -11,39 +11,29 @@
 # 2. The bot will reply with the channel's ID (it's usually a negative number).
 
 tasks:
-  - name: "Task 1: News and Updates"
+  - name: "Twitter to Telegram News"
+    paused: false
     sources:
-      - -1001234567890  # Example Source Channel ID 1
-      - -1001234567891  # Example Source Channel ID 2
+      - platform: "twitter"
+        identifier: "elonmusk"
     targets:
-      - -1009876543210  # Example Target Channel ID
+      - platform: "telegram"
+        identifier: -1001234567890
     ai_options:
-      reword: true
-      summarize: false
-      header: "📢 Breaking News"
-      footer: "Powered by MyBrand"
-      watermark:
-        replace_from: "Example.com"
-        replace_to: "MyBrand"
-    filters:
-      include_keywords: ["breaking", "update"]
-      exclude_keywords: ["sports", "entertainment"]
+      redesign: true
+      header: "🚀 **Twitter News**"
+      footer: "Source: X.com"
 
-  - name: "Task 2: Sports and Entertainment"
+  - name: "Multi-Platform Repost"
+    paused: true
     sources:
-      - -1001111222333  # Example Sports Channel ID
+      - platform: "twitter"
+        identifier: "BBCBreaking"
     targets:
-      - -1004444555666  # Example Entertainment Channel ID
-      - -1007777888999  # Example Music Channel ID
+      - platform: "telegram"
+        identifier: -1009876543210
+      - platform: "twitter"
+        identifier: "my_news_bot"
     ai_options:
-      reword: false
+      redesign: false
       summarize: true
-      summary_length: 100
-      header: null
-      footer: "Via MyBrand"
-      watermark:
-        replace_from: "SourceBrand"
-        replace_to: "MyBrand"
-    filters:
-      include_keywords: []
-      exclude_keywords: ["politics"]

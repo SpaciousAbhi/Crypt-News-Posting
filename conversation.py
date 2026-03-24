@@ -11,7 +11,9 @@ from config import TASKS, save_tasks_to_yaml
 # States for the conversation
 (
     NAME,
+    SOURCE_PLATFORM,
     SOURCES,
+    TARGET_PLATFORM,
     TARGETS,
     AI_OPTIONS,
     HEADER,
@@ -19,7 +21,7 @@ from config import TASKS, save_tasks_to_yaml
     WATERMARK_FROM,
     WATERMARK_TO,
     CONFIRMATION,
-) = range(9)
+) = range(11)
 
 
 async def add_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,47 +40,66 @@ async def add_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def received_task_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the task name and asks for the source channels."""
+    """Receives the task name and asks for the source platform."""
     context.user_data["task_name"] = update.message.text
     await update.message.reply_text(
-        "Great. Now, please provide the source channel IDs, separated by commas."
+        "Great. Now, please select the **source** platform:",
+        reply_markup=platform_selection_keyboard("source_"),
+        parse_mode="Markdown"
     )
+    return SOURCE_PLATFORM
+
+async def received_source_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stores source platform and asks for identifiers."""
+    query = update.callback_query
+    await query.answer()
+    platform = query.data.split("_")[1]
+    context.user_data["source_platform"] = platform
+    
+    prompt = "Twitter username (e.g. `elonmusk`):" if platform == "twitter" else "Telegram Channel ID (e.g. `-100...`):"
+    await query.edit_message_text(f"Please provide the {prompt}")
     return SOURCES
 
 
 async def received_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the source channels and asks for the target channels."""
-    try:
-        context.user_data["sources"] = [
-            int(x.strip()) for x in update.message.text.split(",")
-        ]
-        await update.message.reply_text(
-            "Got it. Now, please provide the target channel IDs, separated by commas."
-        )
-        return TARGETS
-    except ValueError:
-        await update.message.reply_text(
-            "Invalid input. Please provide a comma-separated list of numeric channel IDs."
-        )
-        return SOURCES
+    """Receives the source identifiers and asks for target platform."""
+    platform = context.user_data["source_platform"]
+    text = update.message.text.strip()
+    
+    # Store as list of dicts for future multi-source support, for now just one
+    context.user_data["sources"] = [{"platform": platform, "identifier": text if platform == "twitter" else int(text)}]
+    
+    await update.message.reply_text(
+        "Got it. Now, please select the **destination** platform:",
+        reply_markup=platform_selection_keyboard("target_"),
+        parse_mode="Markdown"
+    )
+    return TARGET_PLATFORM
+
+async def received_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stores target platform and asks for identifiers."""
+    query = update.callback_query
+    await query.answer()
+    platform = query.data.split("_")[1]
+    context.user_data["target_platform"] = platform
+    
+    prompt = "Twitter username:" if platform == "twitter" else "Telegram Channel ID:"
+    await query.edit_message_text(f"Please provide the {prompt}")
+    return TARGETS
 
 
 async def received_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives the target channels and asks for the AI options."""
-    try:
-        context.user_data["targets"] = [
-            int(x.strip()) for x in update.message.text.split(",")
-        ]
-        await update.message.reply_text(
-            "Please select the AI options for this task.",
-            reply_markup=ai_options_keyboard(context.user_data["ai_options"]),
-        )
-        return AI_OPTIONS
-    except ValueError:
-        await update.message.reply_text(
-            "Invalid input. Please provide a comma-separated list of numeric channel IDs."
-        )
-        return TARGETS
+    """Receives target identifiers and asks for AI options."""
+    platform = context.user_data["target_platform"]
+    text = update.message.text.strip()
+    
+    context.user_data["targets"] = [{"platform": platform, "identifier": text if platform == "twitter" else int(text)}]
+    
+    await update.message.reply_text(
+        "Please select the AI options for this task.",
+        reply_markup=ai_options_keyboard(context.user_data["ai_options"]),
+    )
+    return AI_OPTIONS
 
 
 async def toggle_ai_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,26 +173,22 @@ async def received_watermark_to(
 async def show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays the final confirmation message."""
     ai_options = context.user_data["ai_options"]
-    watermark = ai_options["watermark"]
-    watermark_text = (
-        f"'{watermark['replace_from']}' -> '{watermark['replace_to']}'"
-        if watermark["replace_from"] and watermark["replace_to"]
-        else "Not set"
-    )
+    
+    source_strs = [f"{s['platform']}:`{s['identifier']}`" for s in context.user_data["sources"]]
+    target_strs = [f"{t['platform']}:`{t['identifier']}`" for t in context.user_data["targets"]]
 
     confirmation_message = (
-        "Please confirm the new task:\n\n"
-        f"**Name:** {context.user_data['task_name']}\n"
-        f"**Sources:** {context.user_data['sources']}\n"
-        f"**Targets:** {context.user_data['targets']}\n"
-        f"**Reword:** {'✅' if ai_options['reword'] else '❌'}\n"
-        f"**Summarize:** {'✅' if ai_options['summarize'] else '❌'}\n"
-        f"**Header:** {ai_options['header'] or 'Not set'}\n"
-        f"**Footer:** {ai_options['footer'] or 'Not set'}\n"
-        f"**Watermark:** {watermark_text}\n"
+        "✅ **Please confirm the new task:**\n\n"
+        f"🔹 **Name:** {context.user_data['task_name']}\n"
+        f"🔹 **Sources:** {', '.join(source_strs)}\n"
+        f"🔹 **Targets:** {', '.join(target_strs)}\n"
+        f"🔹 **AI Redesign:** {'✅' if ai_options.get('redesign') else '❌'}\n"
+        f"🔹 **Reword:** {'✅' if ai_options.get('reword') else '❌'}\n"
+        f"🔹 **Summarize:** {'✅' if ai_options.get('summarize') else '❌'}\n"
+        f"🔹 **Header:** {ai_options.get('header') or 'Not set'}\n"
+        f"🔹 **Footer:** {ai_options.get('footer') or 'Not set'}\n"
     )
 
-    # Check if this function was called from a query or a message
     if update.callback_query:
         await update.callback_query.edit_message_text(
             confirmation_message,
@@ -191,6 +208,7 @@ async def confirm_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Saves the task."""
     new_task = {
         "name": context.user_data["task_name"],
+        "paused": False,
         "sources": context.user_data["sources"],
         "targets": context.user_data["targets"],
         "ai_options": context.user_data["ai_options"],
@@ -198,7 +216,7 @@ async def confirm_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     TASKS.append(new_task)
     save_tasks_to_yaml()
     await update.callback_query.edit_message_text(
-        "Task saved successfully!", reply_markup=main_menu_keyboard()
+        "✨ Task saved successfully and is now running!", reply_markup=main_menu_keyboard()
     )
     context.user_data.clear()
     return ConversationHandler.END

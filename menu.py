@@ -19,17 +19,45 @@ def ai_options_keyboard(options):
     keyboard = [
         [
             InlineKeyboardButton(
-                f"Reword: {'✅' if options['reword'] else '❌'}",
+                f"Redesign (AI): {'✅' if options.get('redesign') else '❌'}",
+                callback_data="toggle_redesign",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                f"Reword: {'✅' if options.get('reword') else '❌'}",
                 callback_data="toggle_reword",
             )
         ],
         [
             InlineKeyboardButton(
-                f"Summarize: {'✅' if options['summarize'] else '❌'}",
+                f"Summarize: {'✅' if options.get('summarize') else '❌'}",
                 callback_data="toggle_summarize",
             )
         ],
         [InlineKeyboardButton("Done", callback_data="done_ai_options")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def platform_selection_keyboard(prefix=""):
+    """Returns a keyboard for platform selection."""
+    keyboard = [
+        [
+            InlineKeyboardButton("🐦 Twitter (X)", callback_data=f"{prefix}platform_twitter"),
+            InlineKeyboardButton("✈️ Telegram", callback_data=f"{prefix}platform_telegram"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def task_control_keyboard(index, is_paused):
+    """Returns options for a specific task."""
+    status_btn = "▶️ Resume" if is_paused else "⏸ Pause"
+    status_cmd = "resume" if is_paused else "pause"
+    keyboard = [
+        [InlineKeyboardButton(status_btn, callback_data=f"{status_cmd}_task_{index}")],
+        [InlineKeyboardButton("✏️ Edit", callback_data=f"select_task_{index}")],
+        [InlineKeyboardButton("❌ Remove", callback_data=f"delete_task_{index}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="view_tasks")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
