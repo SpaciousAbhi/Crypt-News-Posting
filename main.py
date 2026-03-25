@@ -54,6 +54,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return BotState.START
 
+async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles back-to-menu navigation."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text(
+            "🚀 **Main Menu**\n\nChoose an action:",
+            reply_markup=Menu.main_menu(),
+            parse_mode="Markdown"
+        )
     return BotState.START
 
 async def capture_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
