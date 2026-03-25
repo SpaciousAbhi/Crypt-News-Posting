@@ -138,7 +138,8 @@ def main():
             CommandHandler("start", start_command),
             CallbackQueryHandler(main_menu_callback, pattern="^menu_main$")
         ],
-        allow_reentry=True
+        allow_reentry=True,
+        per_message=True
     )
 
     application.add_handler(conv_handler)

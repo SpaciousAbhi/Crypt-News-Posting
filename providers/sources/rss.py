@@ -25,7 +25,9 @@ class RSSSource:
         "https://nitter.moomoo.me",
         "https://nitter.tokhmi.xyz",
         "https://nitter.no-logs.com",
-        "https://nitter.net"
+        "https://nitter.on-p.me",
+        "https://nitter.rawbit.ninja",
+        "https://nitter.perennialte.ch"
     ]
 
     def __init__(self, mirrors: Optional[List[str]] = None):

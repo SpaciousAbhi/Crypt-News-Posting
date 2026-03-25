@@ -32,8 +32,12 @@ class TwikitSource:
                 logger.info("[TwikitSource] Logged in successfully.")
             self._is_logged_in = True
         except Exception as e:
-            logger.error(f"[TwikitSource] Login failed: {e}")
-            raise
+            err_msg = str(e)
+            if "KEY_BYTE" in err_msg or "ClientTransaction" in err_msg:
+                logger.error(f"[TwikitSource] Critical Library Failure: {err_msg}. Twitter API internal structure has changed.")
+            else:
+                logger.error(f"[TwikitSource] Login failed: {err_msg}")
+            raise # Let engine handle fallback
 
     async def verify_credentials(self) -> bool:
         """Verifies if the credentials are valid by attempting login."""

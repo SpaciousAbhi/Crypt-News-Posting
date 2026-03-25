@@ -1,6 +1,6 @@
 python-telegram-bot[job-queue]>=21.0
 feedparser>=6.0.10
-twikit>=1.4.1
+twikit>=2.1.2
 groq>=0.9.0
 psycopg2-binary>=2.9.9
 python-dotenv>=1.0.1

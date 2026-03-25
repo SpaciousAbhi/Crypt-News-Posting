@@ -95,21 +95,31 @@ class ProcessingEngine:
             await self._process_item(task, source_id, item, destinations)
 
     async def _fetch_from_source(self, source: Dict[str, Any]) -> List[Any]:
-        """Isolated source fetching logic."""
+        """Isolated source fetching logic with automatic fallback."""
         platform = source['platform']
         identifier = source['identifier']
         
-        if platform == "twitter_rss":
-            return self.rss.fetch_latest(identifier)
-        elif platform == "twitter":
-            tw_user = db.get_setting("TWITTER_USERNAME")
-            tw_pass = db.get_setting("TWITTER_PASSWORD")
-            if tw_user and tw_pass:
-                # Use a fresh source but login only once per interval if possible
-                tw_src = TwikitSource(tw_user, tw_pass)
-                return await tw_src.fetch_latest(identifier)
-        elif platform == "telegram":
-            return await self.tg_src.fetch_latest(identifier)
+        try:
+            if platform == "twitter_rss":
+                return self.rss.fetch_latest(identifier)
+            elif platform == "twitter":
+                tw_user = db.get_setting("TWITTER_USERNAME")
+                tw_pass = db.get_setting("TWITTER_PASSWORD")
+                if tw_user and tw_pass:
+                    try:
+                        tw_src = TwikitSource(tw_user, tw_pass)
+                        return await tw_src.fetch_latest(identifier)
+                    except Exception as e:
+                        logger.warning(f"[Engine] Direct Twitter fetch failed for {identifier}: {e}. Falling back to RSS...")
+                        return self.rss.fetch_latest(identifier)
+                else:
+                    logger.warning(f"[Engine] Twitter credentials missing. Using RSS as default for {identifier}.")
+                    return self.rss.fetch_latest(identifier)
+            elif platform == "telegram":
+                return await self.tg_src.fetch_latest(identifier)
+        except Exception as e:
+            logger.error(f"[Engine] Source {platform}:{identifier} critical failure: {e}")
+            
         return []
 
     async def _process_item(self, task: Dict[str, Any], source_id: int, item: Any, destinations: List[Dict[str, Any]]):
