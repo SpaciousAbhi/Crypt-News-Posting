@@ -23,10 +23,22 @@ class DatabaseManager:
             
         self._init_db()
 
+    @property
+    def placeholder(self):
+        return "%s" if self.is_postgres else "?"
+
+    def _prepare_query(self, query: str) -> str:
+        """Converts generic ? placeholders to platform-specific ones."""
+        if self.is_postgres:
+            return query.replace("?", "%s")
+        return query
+
     def _init_pool(self):
         try:
+            # Handle heroku postgres:// vs postgresql://
+            url = self.db_url.replace("postgres://", "postgresql://") if self.db_url else None
             self._pool = psycopg2.pool.SimpleConnectionPool(
-                5, 20, dsn=self.db_url, sslmode='require'
+                1, 20, dsn=url, sslmode='require'
             )
             logger.info("[DB] PostgreSQL connection pool initialized.")
         except Exception as e:
@@ -63,12 +75,12 @@ class DatabaseManager:
                 '''CREATE TABLE IF NOT EXISTS mirror_health (
                     url TEXT PRIMARY KEY,
                     fail_count INTEGER DEFAULT 0,
-                    last_fail REAL DEFAULT 0,
-                    last_success REAL DEFAULT 0,
+                    last_fail DOUBLE PRECISION DEFAULT 0,
+                    last_success DOUBLE PRECISION DEFAULT 0,
                     is_active INTEGER DEFAULT 1
                 )''',
                 '''CREATE TABLE IF NOT EXISTS tasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT,
                     user_id INTEGER,
                     status TEXT DEFAULT 'active',
@@ -76,7 +88,7 @@ class DatabaseManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )''',
                 '''CREATE TABLE IF NOT EXISTS sources (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     task_id INTEGER,
                     platform TEXT,
                     identifier TEXT,
@@ -84,7 +96,7 @@ class DatabaseManager:
                     FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 )''',
                 '''CREATE TABLE IF NOT EXISTS destinations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     task_id INTEGER,
                     platform TEXT,
                     identifier TEXT,
@@ -97,10 +109,10 @@ class DatabaseManager:
                 )'''
             ]
             
-            # Adjust for Postgres SERIAL
-            if self.is_postgres:
-                queries = [q.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY") for q in queries]
-                queries = [q.replace("REAL", "DOUBLE PRECISION") for q in queries]
+            # Revert SERIAL/DOUBLE for SQLite
+            if not self.is_postgres:
+                queries = [q.replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT") for q in queries]
+                queries = [q.replace("DOUBLE PRECISION", "REAL") for q in queries]
             
             for q in queries:
                 cursor.execute(q)
@@ -108,10 +120,12 @@ class DatabaseManager:
             logger.info("[DB] Core tables verified.")
         except Exception as e:
             logger.error(f"[DB] Schema initialization error: {e}")
+            conn.rollback()
         finally:
             self._release_connection(conn)
 
     def execute(self, query: str, params: tuple = ()):
+        query = self._prepare_query(query)
         conn, cursor = self._get_connection()
         try:
             cursor.execute(query, params)
@@ -123,6 +137,7 @@ class DatabaseManager:
             self._release_connection(conn)
 
     def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict]:
+        query = self._prepare_query(query)
         conn, cursor = self._get_connection()
         try:
             cursor.execute(query, params)
@@ -133,6 +148,7 @@ class DatabaseManager:
             self._release_connection(conn)
 
     def fetch_all(self, query: str, params: tuple = ()) -> List[Dict]:
+        query = self._prepare_query(query)
         conn, cursor = self._get_connection()
         try:
             cursor.execute(query, params)
@@ -144,23 +160,29 @@ class DatabaseManager:
 
     # --- Mirror Management ---
     def update_mirror_status(self, url: str, success: bool):
+        ts = datetime.now().timestamp()
         if success:
-            self.execute("INSERT INTO mirror_health (url, last_success, is_active) VALUES (?, ?, 1) ON CONFLICT(url) DO UPDATE SET fail_count=0, last_success=EXCLUDED.last_success, is_active=1", 
-                        (url, datetime.now().timestamp()))
+            sql = f"""INSERT INTO mirror_health (url, last_success, is_active) VALUES ({self.placeholder}, {self.placeholder}, 1) 
+                      ON CONFLICT(url) DO UPDATE SET fail_count=0, last_success=EXCLUDED.last_success, is_active=1"""
+            self.execute(sql, (url, ts))
         else:
-            self.execute("INSERT INTO mirror_health (url, last_fail, fail_count) VALUES (?, ?, 1) ON CONFLICT(url) DO UPDATE SET fail_count=mirror_health.fail_count+1, last_fail=EXCLUDED.last_fail, is_active=CASE WHEN mirror_health.fail_count > 5 THEN 0 ELSE 1 END", 
-                        (url, datetime.now().timestamp()))
+            sql = f"""INSERT INTO mirror_health (url, last_fail, fail_count) VALUES ({self.placeholder}, {self.placeholder}, 1) 
+                      ON CONFLICT(url) DO UPDATE SET fail_count=mirror_health.fail_count+1, last_fail=EXCLUDED.last_fail, is_active=CASE WHEN mirror_health.fail_count > 5 THEN 0 ELSE 1 END"""
+            self.execute(sql, (url, ts))
 
     def get_active_mirrors(self) -> List[str]:
         res = self.fetch_all("SELECT url FROM mirror_health WHERE is_active=1 ORDER BY last_success DESC, fail_count ASC")
         return [r['url'] for r in res]
 
     def register_mirror(self, url: str):
-        self.execute("INSERT OR IGNORE INTO mirror_health (url) VALUES (?)", (url,))
+        if self.is_postgres:
+            self.execute("INSERT INTO mirror_health (url) VALUES (%s) ON CONFLICT DO NOTHING", (url,))
+        else:
+            self.execute("INSERT OR IGNORE INTO mirror_health (url) VALUES (?)", (url,))
 
     # --- Task Management ---
     def create_task(self, name: str, user_id: int, options: dict) -> int:
-        query = "INSERT INTO tasks (name, user_id, options) VALUES (?, ?, ?)"
+        query = f"INSERT INTO tasks (name, user_id, options) VALUES ({self.placeholder}, {self.placeholder}, {self.placeholder})"
         if self.is_postgres:
             query += " RETURNING id"
             conn, cursor = self._get_connection()
@@ -199,10 +221,16 @@ class DatabaseManager:
         return res is not None
 
     def mark_item_processed(self, item_id: str, source_id: int):
-        self.execute("INSERT OR IGNORE INTO processed_items (item_id, source_id) VALUES (?, ?)", (item_id, source_id))
+        if self.is_postgres:
+            self.execute("INSERT INTO processed_items (item_id, source_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (item_id, source_id))
+        else:
+            self.execute("INSERT OR IGNORE INTO processed_items (item_id, source_id) VALUES (?, ?)", (item_id, source_id))
 
     def set_setting(self, key: str, value: str):
-        self.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        if self.is_postgres:
+            self.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, value))
+        else:
+            self.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     def get_setting(self, key: str) -> Optional[str]:
         res = self.fetch_one("SELECT value FROM settings WHERE key=?", (key,))

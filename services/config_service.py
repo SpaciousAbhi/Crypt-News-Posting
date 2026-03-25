@@ -19,11 +19,13 @@ class ConfigService:
     # Specific common keys
     @property
     def telegram_token(self):
-        return "7798265687:AAG61EtPE_SQfIwIKv8qjD1fZaes15VEBW4"
+        import os
+        return os.getenv("TELEGRAM_BOT_TOKEN", "7798265687:AAG61EtPE_SQfIwIKv8qjD1fZaes15VEBW4")
 
     @property
     def admin_id(self):
-        return "1654334233"
+        import os
+        return os.getenv("ADMIN_USER_ID", "1654334233")
 
     @property
     def groq_key(self):
