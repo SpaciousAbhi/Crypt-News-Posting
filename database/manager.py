@@ -3,41 +3,44 @@
 import os
 import sqlite3
 import json
+import psycopg2
+from psycopg2 import pool
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from services.logger import logger
 
 class DatabaseManager:
     def __init__(self, db_url: Optional[str] = None):
-        self.db_url = db_url or os.getenv("DATABASE_URL", "bot_data.db")
-        self.is_postgres = self.db_url.startswith("postgres://") or self.db_url.startswith("postgresql://")
-        
-        # Handle Heroku's postgres:// vs postgresql://
-        if self.is_postgres and self.db_url.startswith("postgres://"):
-            self.db_url = self.db_url.replace("postgres://", "postgresql://", 1)
-            
+        self.db_url = db_url or os.getenv("DATABASE_URL")
+        self.is_postgres = self.db_url and self.db_url.startswith("postgres")
         self._pool = None
         self._sqlite_conn = None
-        self._init_pool()
+        
+        if self.is_postgres:
+            self._init_pool()
+        else:
+            self._init_sqlite()
+            
         self._init_db()
 
     def _init_pool(self):
-        """Initializes the connection pool."""
-        if self.is_postgres:
-            from psycopg2.pool import ThreadedConnectionPool
-            try:
-                # 5-20 connections in the pool
-                self._pool = ThreadedConnectionPool(5, 20, self.db_url)
-                logger.info("[DB] PostgreSQL connection pool initialized.")
-            except Exception as e:
-                logger.error(f"[DB] Failed to initialize Postgres pool: {e}")
-        else:
-            # For SQLite, we use a single persistent connection with WAL mode
-            self._sqlite_conn = sqlite3.connect(self.db_url, check_same_thread=False)
-            self._sqlite_conn.row_factory = sqlite3.Row
-            # Enable WAL mode for better concurrency
+        try:
+            self._pool = psycopg2.pool.SimpleConnectionPool(
+                5, 20, dsn=self.db_url, sslmode='require'
+            )
+            logger.info("[DB] PostgreSQL connection pool initialized.")
+        except Exception as e:
+            logger.error(f"[DB] PostgreSQL pool initialization failed: {e}")
+
+    def _init_sqlite(self):
+        db_path = "bot_database.db"
+        try:
+            self._sqlite_conn = sqlite3.connect(db_path, check_same_thread=False)
             self._sqlite_conn.execute("PRAGMA journal_mode=WAL")
+            self._sqlite_conn.execute("PRAGMA synchronous=NORMAL")
             logger.info("[DB] SQLite persistent connection initialized (WAL mode).")
+        except Exception as e:
+            logger.error(f"[DB] SQLite initialization failed: {e}")
 
     def _get_connection(self):
         if self.is_postgres:
@@ -51,282 +54,162 @@ class DatabaseManager:
     def _release_connection(self, conn):
         if self.is_postgres and self._pool:
             self._pool.putconn(conn)
-        # SQLite connection is persistent, no need to release
 
     def _init_db(self):
         conn, cursor = self._get_connection()
-        
-        # SQL for both SQLite and Postgres (mostly compatible)
-        queries = [
-            # Global Settings
-            """CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""",
-            
-            # Tasks
-            """CREATE TABLE IF NOT EXISTS tasks (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                user_id BIGINT NOT NULL,
-                is_active BOOLEAN DEFAULT TRUE,
-                config TEXT, -- Task-specific JSON config
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""" if self.is_postgres else 
-            """CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
-                is_active BOOLEAN DEFAULT 1,
-                config TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )""",
-            
-            # Sources
-            """CREATE TABLE IF NOT EXISTS sources (
-                id SERIAL PRIMARY KEY,
-                task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-                platform TEXT NOT NULL,
-                identifier TEXT NOT NULL,
-                config TEXT, -- Store JSON here
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""" if self.is_postgres else 
-            """CREATE TABLE IF NOT EXISTS sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-                platform TEXT NOT NULL,
-                identifier TEXT NOT NULL,
-                config TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )""",
-            
-            # Destinations
-            """CREATE TABLE IF NOT EXISTS destinations (
-                id SERIAL PRIMARY KEY,
-                task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-                platform TEXT NOT NULL,
-                identifier TEXT NOT NULL,
-                config TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""" if self.is_postgres else 
-            """CREATE TABLE IF NOT EXISTS destinations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-                platform TEXT NOT NULL,
-                identifier TEXT NOT NULL,
-                config TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )""",
-            
-            # Processed State tracking
-            """CREATE TABLE IF NOT EXISTS processed_items (
-                task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-                source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
-                item_id TEXT NOT NULL,
-                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (task_id, source_id, item_id)
-            )""" if self.is_postgres else 
-            """CREATE TABLE IF NOT EXISTS processed_items (
-                task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
-                source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
-                item_id TEXT NOT NULL,
-                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (task_id, source_id, item_id)
-            )""",
-            
-            # Dynamic Source Items (Capture)
-            """CREATE TABLE IF NOT EXISTS source_items (
-                id SERIAL PRIMARY KEY,
-                identifier TEXT NOT NULL,
-                platform TEXT NOT NULL,
-                content TEXT,
-                media_json TEXT, -- JSON string of media URLs
-                item_id TEXT UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""" if self.is_postgres else 
-            """CREATE TABLE IF NOT EXISTS source_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                identifier TEXT NOT NULL,
-                platform TEXT NOT NULL,
-                content TEXT,
-                media_json TEXT,
-                item_id TEXT UNIQUE,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )"""
-        ]
-        
         try:
-            for query in queries:
-                cursor.execute(query)
+            queries = [
+                '''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''',
+                '''CREATE TABLE IF NOT EXISTS mirror_health (
+                    url TEXT PRIMARY KEY,
+                    fail_count INTEGER DEFAULT 0,
+                    last_fail REAL DEFAULT 0,
+                    last_success REAL DEFAULT 0,
+                    is_active INTEGER DEFAULT 1
+                )''',
+                '''CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
+                    user_id INTEGER,
+                    status TEXT DEFAULT 'active',
+                    options TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )''',
+                '''CREATE TABLE IF NOT EXISTS sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER,
+                    platform TEXT,
+                    identifier TEXT,
+                    last_check_id TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )''',
+                '''CREATE TABLE IF NOT EXISTS destinations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER,
+                    platform TEXT,
+                    identifier TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )''',
+                '''CREATE TABLE IF NOT EXISTS processed_items (
+                    item_id TEXT PRIMARY KEY,
+                    source_id INTEGER,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )'''
+            ]
             
-            # Migration: Add config column to tasks if missing
-            try:
-                if self.is_postgres:
-                    cursor.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS config TEXT")
-                else:
-                    cursor.execute("ALTER TABLE tasks ADD COLUMN config TEXT")
-            except:
-                pass # Already exists or other error handled gracefully
-                
+            # Adjust for Postgres SERIAL
+            if self.is_postgres:
+                queries = [q.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY") for q in queries]
+                queries = [q.replace("REAL", "DOUBLE PRECISION") for q in queries]
+            
+            for q in queries:
+                cursor.execute(q)
             conn.commit()
+            logger.info("[DB] Core tables verified.")
+        except Exception as e:
+            logger.error(f"[DB] Schema initialization error: {e}")
         finally:
-            if self.is_postgres: self._release_connection(conn)
+            self._release_connection(conn)
 
     def execute(self, query: str, params: tuple = ()):
         conn, cursor = self._get_connection()
         try:
-            if not self.is_postgres:
-                query = query.replace("%s", "?")
             cursor.execute(query, params)
             conn.commit()
-            return cursor
         except Exception as e:
-            conn.rollback()
             logger.error(f"[DB] Execute error: {e}")
-            raise
+            conn.rollback()
         finally:
-            if self.is_postgres: self._release_connection(conn)
+            self._release_connection(conn)
 
-    def fetch_all(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+    def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict]:
         conn, cursor = self._get_connection()
         try:
-            if not self.is_postgres:
-                query = query.replace("%s", "?")
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-        except Exception as e:
-            logger.error(f"[DB] Fetch error: {e}")
-            return []
+            res = cursor.fetchone()
+            if self.is_postgres: return res
+            return dict(res) if res else None
         finally:
-            if self.is_postgres: self._release_connection(conn)
+            self._release_connection(conn)
 
-    def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
-        results = self.fetch_all(query, params)
-        return results[0] if results else None
+    def fetch_all(self, query: str, params: tuple = ()) -> List[Dict]:
+        conn, cursor = self._get_connection()
+        try:
+            cursor.execute(query, params)
+            res = cursor.fetchall()
+            if self.is_postgres: return res
+            return [dict(row) for row in res]
+        finally:
+            self._release_connection(conn)
 
-    # --- Settings CRUD ---
-    def set_setting(self, key: str, value: str):
-        if self.is_postgres:
-            query = """INSERT INTO settings (key, value) VALUES (%s, %s) 
-                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP"""
+    # --- Mirror Management ---
+    def update_mirror_status(self, url: str, success: bool):
+        if success:
+            self.execute("INSERT INTO mirror_health (url, last_success, is_active) VALUES (?, ?, 1) ON CONFLICT(url) DO UPDATE SET fail_count=0, last_success=EXCLUDED.last_success, is_active=1", 
+                        (url, datetime.now().timestamp()))
         else:
-            query = "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP)"
-        self.execute(query, (key, value))
+            self.execute("INSERT INTO mirror_health (url, last_fail, fail_count) VALUES (?, ?, 1) ON CONFLICT(url) DO UPDATE SET fail_count=mirror_health.fail_count+1, last_fail=EXCLUDED.last_fail, is_active=CASE WHEN mirror_health.fail_count > 5 THEN 0 ELSE 1 END", 
+                        (url, datetime.now().timestamp()))
 
-    def get_setting(self, key: str) -> Optional[str]:
-        row = self.fetch_one("SELECT value FROM settings WHERE key = %s", (key,))
-        return row['value'] if row else None
+    def get_active_mirrors(self) -> List[str]:
+        res = self.fetch_all("SELECT url FROM mirror_health WHERE is_active=1 ORDER BY last_success DESC, fail_count ASC")
+        return [r['url'] for r in res]
+
+    def register_mirror(self, url: str):
+        self.execute("INSERT OR IGNORE INTO mirror_health (url) VALUES (?)", (url,))
 
     # --- Task Management ---
-    def create_task(self, name: str, user_id: int, config: Dict[str, Any] = {}) -> int:
-        conn, cursor = self._get_connection()
-        try:
-            placeholder = "%s" if self.is_postgres else "?"
-            query = f"INSERT INTO tasks (name, user_id, config) VALUES ({placeholder}, {placeholder}, {placeholder})"
-            if self.is_postgres:
-                query += " RETURNING id"
-                cursor.execute(query, (name, user_id, json.dumps(config or {})))
-                task_id = cursor.fetchone()['id']
-            else:
-                cursor.execute(query, (name, user_id, json.dumps(config or {})))
-                task_id = cursor.lastrowid
+    def create_task(self, name: str, user_id: int, options: dict) -> int:
+        query = "INSERT INTO tasks (name, user_id, options) VALUES (?, ?, ?)"
+        if self.is_postgres:
+            query += " RETURNING id"
+            conn, cursor = self._get_connection()
+            cursor.execute(query, (name, user_id, json.dumps(options)))
+            res = cursor.fetchone()
             conn.commit()
-            return task_id
-        finally:
-            if self.is_postgres: self._release_connection(conn)
+            self._release_connection(conn)
+            return res['id']
+        else:
+            self.execute(query, (name, user_id, json.dumps(options)))
+            res = self.fetch_one("SELECT last_insert_rowid() as id")
+            return res['id']
 
-    def update_task(self, task_id: int, updates: Dict[str, Any]):
-        """Updates task fields (name, config, is_active)."""
-        if not updates:
-            return
-            
-        fields = []
-        params = []
-        for k, v in updates.items():
-            if k == 'config':
-                v = json.dumps(v)
-            fields.append(f"{k} = %s")
-            params.append(v)
-        
-        params.append(task_id)
-        query = f"UPDATE tasks SET {', '.join(fields)} WHERE id = %s"
-        self.execute(query, tuple(params))
+    def add_source(self, task_id: int, platform: str, identifier: str):
+        self.execute("INSERT INTO sources (task_id, platform, identifier) VALUES (?, ?, ?)", (task_id, platform, identifier))
 
-    def get_tasks(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        if user_id:
-            query = "SELECT * FROM tasks WHERE user_id = %s ORDER BY created_at DESC"
-            return self.fetch_all(query, (user_id,))
-        return self.fetch_all("SELECT * FROM tasks ORDER BY created_at DESC")
+    def add_destination(self, task_id: int, platform: str, identifier: str):
+        self.execute("INSERT INTO destinations (task_id, platform, identifier) VALUES (?, ?, ?)", (task_id, platform, identifier))
 
-    def delete_task(self, task_id: int):
-        self.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+    def get_tasks(self, user_id: int) -> List[Dict]:
+        return self.fetch_all("SELECT * FROM tasks WHERE user_id=?", (user_id,))
 
-    # --- Source & Destination CRUD ---
-    def add_source(self, task_id: int, platform: str, identifier: str, config: Dict[str, Any] = {}):
-        self.execute(
-            "INSERT INTO sources (task_id, platform, identifier, config) VALUES (%s, %s, %s, %s)",
-            (task_id, platform, identifier, json.dumps(config))
-        )
-
-    def add_destination(self, task_id: int, platform: str, identifier: str, config: Dict[str, Any] = {}):
-        self.execute(
-            "INSERT INTO destinations (task_id, platform, identifier, config) VALUES (%s, %s, %s, %s)",
-            (task_id, platform, identifier, json.dumps(config))
-        )
-
-    def get_task_details(self, task_id: int) -> Dict[str, Any]:
-        task = self.fetch_one("SELECT * FROM tasks WHERE id = %s", (task_id,))
-        if not task:
-            return None
-        
-        # Resilient access to avoid KeyError during migration
-        cfg_str = task.get('config')
-        task['config'] = json.loads(cfg_str) if cfg_str else {}
-        
-        task['sources'] = self.fetch_all("SELECT * FROM sources WHERE task_id = %s", (task_id,))
-        task['destinations'] = self.fetch_all("SELECT * FROM destinations WHERE task_id = %s", (task_id,))
-        
-        # Deserialize JSON configs
-        for s in task['sources']:
-            s['config'] = json.loads(s['config']) if s['config'] else {}
-        for d in task['destinations']:
-            d['config'] = json.loads(d['config']) if d['config'] else {}
-            
+    def get_task_details(self, task_id: int) -> Optional[Dict]:
+        task = self.fetch_one("SELECT * FROM tasks WHERE id=?", (task_id,))
+        if task:
+            task['sources'] = self.fetch_all("SELECT * FROM sources WHERE task_id=?", (task_id,))
+            task['destinations'] = self.fetch_all("SELECT * FROM destinations WHERE task_id=?", (task_id,))
+            task['options'] = json.loads(task['options'])
         return task
 
-    # --- Processed State ---
-    def is_item_processed(self, task_id: int, source_id: int, item_id: str) -> bool:
-        row = self.fetch_one(
-            "SELECT 1 FROM processed_items WHERE task_id = %s AND source_id = %s AND item_id = %s",
-            (task_id, source_id, item_id)
-        )
-        return row is not None
+    def update_source_last_id(self, source_id: int, last_id: str):
+        self.execute("UPDATE sources SET last_check_id=? WHERE id=?", (last_id, source_id))
 
-    def mark_item_processed(self, task_id: int, source_id: int, item_id: str):
-        try:
-            self.execute(
-                "INSERT INTO processed_items (task_id, source_id, item_id) VALUES (%s, %s, %s)",
-                (task_id, source_id, item_id)
-            )
-        except:
-            pass # Already exists
+    def is_item_processed(self, item_id: str) -> bool:
+        res = self.fetch_one("SELECT 1 FROM processed_items WHERE item_id=?", (item_id,))
+        return res is not None
 
-    # --- Source Item Capture ---
-    def add_source_item(self, identifier: str, platform: str, content: str, item_id: str, media_urls: List[str] = []):
-        try:
-            self.execute(
-                "INSERT INTO source_items (identifier, platform, content, item_id, media_json) VALUES (%s, %s, %s, %s, %s)",
-                (identifier, platform, content, item_id, json.dumps(media_urls))
-            )
-        except Exception as e:
-            # logger.error(f"[DB] Failed to add source item: {e}")
-            pass # Duplicate item_id
+    def mark_item_processed(self, item_id: str, source_id: int):
+        self.execute("INSERT OR IGNORE INTO processed_items (item_id, source_id) VALUES (?, ?)", (item_id, source_id))
 
-    def get_unread_source_items(self, identifier: str, platform: str, limit: int = 5) -> List[Dict[str, Any]]:
-        query = "SELECT * FROM source_items WHERE identifier = %s AND platform = %s ORDER BY created_at DESC LIMIT %s"
-        return self.fetch_all(query, (identifier, platform, limit))
+    def set_setting(self, key: str, value: str):
+        self.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    def get_setting(self, key: str) -> Optional[str]:
+        res = self.fetch_one("SELECT value FROM settings WHERE key=?", (key,))
+        return res['value'] if res else None
+
+    def delete_task(self, task_id: int):
+        self.execute("DELETE FROM tasks WHERE id=?", (task_id,))
 
 # Global Instance
 db = DatabaseManager()

@@ -3,9 +3,11 @@
 import feedparser
 import re
 import time
-from typing import List, Optional
+import httpx
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from services.logger import logger
+from database.manager import db
 
 @dataclass
 class SourceItem:
@@ -17,9 +19,10 @@ class SourceItem:
     timestamp: float
 
 class RSSSource:
-    """Robust RSS feed monitor with mirror rotation."""
+    """Robust RSS feed monitor with mirror rotation and health tracking."""
     
     DEFAULT_MIRRORS = [
+        "https://twiiit.com", # Smart Redirector
         "https://nitter.privacydev.net",
         "https://nitter.cz",
         "https://nitter.moomoo.me",
@@ -27,91 +30,91 @@ class RSSSource:
         "https://nitter.no-logs.com",
         "https://nitter.on-p.me",
         "https://nitter.rawbit.ninja",
-        "https://nitter.perennialte.ch"
+        "https://nitter.perennialte.ch",
+        "https://nitter.poast.org"
     ]
 
     def __init__(self, mirrors: Optional[List[str]] = None):
         self.mirrors = mirrors or self.DEFAULT_MIRRORS
+        # Register mirrors in DB if not present
+        try:
+            for m in self.mirrors:
+                db.register_mirror(m)
+        except Exception:
+            pass
 
     def fetch_latest(self, identifier: str) -> List[SourceItem]:
-        """Fetches latest updates from the RSS identifier."""
-        items = []
+        """Fetches from mirrors with intelligent rotation and health tracking."""
+        username = identifier.strip('@')
+        
+        # 1. Try health-ranked mirrors
+        try:
+            active_mirrors = db.get_active_mirrors()
+        except Exception:
+            active_mirrors = []
+            
+        if not active_mirrors: active_mirrors = self.mirrors
+        
         errors = []
-
-        import httpx
-        for mirror in self.mirrors:
-            rss_url = f"{mirror}/{identifier.strip('@')}/rss"
+        for mirror in active_mirrors:
+            rss_url = f"{mirror}/{username}/rss"
             try:
                 logger.info(f"[RSS] Fetching from mirror: {mirror}")
-                # Use httpx for a proper timeout (feedparser doesn't support it)
-                with httpx.Client(timeout=10, follow_redirects=True) as client:
-                    resp = client.get(rss_url)
-                    resp.raise_for_status()
-                    xml_content = resp.text
-                
-                feed = feedparser.parse(xml_content)
-                
-                if feed.bozo:
-                    raise Exception(f"Feed parsing error: {feed.bozo_exception}")
-
-                if not feed.entries:
-                    logger.warning(f"[RSS] No entries found for {identifier} on {mirror}")
-                    continue
-
-                for entry in feed.entries:
-                    # Extract ID from link or entry.id
-                    item_id = self._extract_id_from_link(entry.link) or entry.id
-                    
-                    # Clean up text
-                    text = self._sanitize_text(entry.title)
-                    if not text and hasattr(entry, 'description'):
-                        text = self._sanitize_text(entry.description)
-                    
-                    # Extract media (images/videos)
-                    desc = getattr(entry, 'description', '')
-                    media_urls = self._extract_media(desc, mirror)
-                    
-                    items.append(SourceItem(
-                        id=item_id,
-                        text=text,
-                        media_urls=media_urls,
-                        author=identifier,
-                        url=entry.link,
-                        timestamp=time.mktime(entry.published_parsed) if hasattr(entry, 'published_parsed') else time.time()
-                    ))
-                
-                logger.info(f"[RSS] Successfully fetched {len(items)} items from {mirror}")
-                return items # Stop rotation on success
-
+                items = self._fetch_from_url(rss_url, username)
+                if items:
+                    try: db.update_mirror_status(mirror, True)
+                    except Exception: pass
+                    return items
+                else:
+                    raise Exception("Empty or invalid feed")
             except Exception as e:
-                logger.error(f"[RSS] Mirror {mirror} failed: {e}")
-                errors.append(str(e))
-                continue
-
-        logger.error(f"[RSS] All mirrors failed for {identifier}. Errors: {errors}")
+                err_msg = str(e)
+                logger.error(f"[RSS] Mirror {mirror} failed: {err_msg}")
+                errors.append(err_msg)
+                try: db.update_mirror_status(mirror, False)
+                except Exception: pass
+                time.sleep(1) # Grace period
+                
+        logger.error(f"[RSS] All mirrors failed for {username}. Errors: {errors}")
         return []
 
-    def _extract_id_from_link(self, link: str) -> Optional[str]:
-        """Extracts Tweet ID from a status link."""
-        match = re.search(r"/status/(\d+)", link)
-        return match.group(1) if match else None
-
-    def _sanitize_text(self, text: str) -> str:
-        """Strips HTML tags and simplifies text."""
-        if not text: return ""
-        # Remove HTML tags
-        clean = re.sub(r'<[^>]+>', '', text)
-        # Decode entities (basic)
-        clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-        return clean.strip()
-
-    def _extract_media(self, description: str, mirror: str) -> List[str]:
-        """Extracts media URLs from the HTML description."""
-        # Find <img> and <source>/<video> tags
-        img_urls = re.findall(r'<img src="([^"]+)"', description)
-        video_urls = re.findall(r'<source src="([^"]+)"', description)
-        poster_urls = re.findall(r'poster="([^"]+)"', description)
+    def _fetch_from_url(self, rss_url: str, identifier: str) -> List[SourceItem]:
+        """Internal helper to fetch and parse a specific RSS URL."""
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            resp = client.get(rss_url)
+            resp.raise_for_status()
+            xml_content = resp.text
         
-        all_urls = img_urls + video_urls + poster_urls
-        # Fix relative URLs and remove duplicates
-        return list(set([url if url.startswith("http") else f"{mirror}{url}" for url in all_urls]))
+        feed = feedparser.parse(xml_content)
+        if feed.bozo:
+            raise Exception(f"Feed parsing error: {feed.bozo_exception}")
+
+        if not feed.entries:
+            return []
+
+        items = []
+        for entry in feed.entries:
+            # Extract ID and handle timestamp
+            entry_id = entry.get('id', entry.get('link', ''))
+            ts = time.mktime(entry.published_parsed) if 'published_parsed' in entry else time.time()
+            
+            # Basic text extraction
+            text = entry.get('title', '')
+            if 'summary' in entry:
+                text = re.sub(r'<[^>]+>', '', entry.summary)
+            
+            # Media extraction (Nitter usually puts it in description or media:content)
+            media_urls = []
+            if 'summary' in entry:
+                media_matches = re.findall(r'src="([^"]+)"', entry.summary)
+                media_urls.extend(media_matches)
+            
+            items.append(SourceItem(
+                id=entry_id,
+                text=text,
+                media_urls=media_urls,
+                author=identifier,
+                url=entry.get('link', ''),
+                timestamp=ts
+            ))
+        return items
