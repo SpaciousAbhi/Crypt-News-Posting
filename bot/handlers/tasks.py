@@ -6,6 +6,11 @@ from bot.states import BotState
 from bot.menu import Menu
 from database.manager import db
 from services.logger import logger
+import re
+
+from providers.sources.rss import RSSSource
+from providers.sources.twitter import TwikitSource
+from providers.sources.telegram import TelegramSource
 
 async def view_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows the list of tasks."""
@@ -144,27 +149,52 @@ async def receive_source_platform(update: Update, context: ContextTypes.DEFAULT_
     return BotState.ENTER_SOURCE_ID
 
 async def receive_source_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives and validates source ID, then asks for destination."""
+    """Receives and validates source ID with real-time verification."""
     source_id = update.message.text.strip().replace("@", "")
     platform = context.user_data.get('new_source_platform')
     
-    if platform == "twitter_rss" and not re.match(r"^[\w]{1,15}$", source_id):
-        await update.message.reply_text("❌ **Invalid Twitter username.**\nPlease try again (e.g. `binance`):")
-        return BotState.ENTER_SOURCE_ID
-        
-    context.user_data['new_source_id'] = source_id
+    status_msg = await update.message.reply_text(f"🔍 **Verifying {platform.replace('_', ' ').title()} Source...**", parse_mode="Markdown")
     
-    msg = (
-        f"🎯 Source Tracked: `@{source_id}`\n\n"
-        "**Step 3: Destination Platform**\n"
-        "Where should the AI-redesigned content be published?"
-    )
-    await update.message.reply_text(
-        msg,
-        reply_markup=Menu.platform_selection("dest"),
-        parse_mode="Markdown"
-    )
-    return BotState.SELECT_DEST_PLATFORM
+    try:
+        if platform == "twitter_rss":
+            if not re.match(r"^[\w]{1,15}$", source_id):
+                await status_msg.edit_text("❌ **Invalid Twitter username.**\nPlease try again (e.g. `binance`):")
+                return BotState.ENTER_SOURCE_ID
+            
+            # Simple reachability check via RSS
+            rss = RSSSource()
+            items = rss.fetch_latest(source_id)
+            if not items:
+                await status_msg.edit_text("⚠️ **Source unreachable via RSS.**\nThis user might be private or Nitter mirrors are down. Do you want to proceed anyway or try another ID?")
+                # We let them proceed but warn
+        
+        elif platform == "twitter":
+            tw_user = db.get_setting("TWITTER_USERNAME")
+            tw_pass = db.get_setting("TWITTER_PASSWORD")
+            if not (tw_user and tw_pass):
+                await status_msg.edit_text("❌ **Twitter Credentials Missing.**\nPlease set your username and password in **Settings** first.")
+                return ConversationHandler.END
+            
+            tw_src = TwikitSource(tw_user, tw_pass)
+            await tw_src.fetch_latest(source_id) # This will verify login and user existence
+            
+        elif platform == "telegram":
+            try:
+                chat = await context.bot.get_chat(update.message.text.strip())
+                source_id = chat.id
+                await status_msg.edit_text(f"✅ **Verified Channel:** {chat.title}")
+            except Exception as e:
+                await status_msg.edit_text(f"❌ **Telegram Error:** {e}\n\nMake sure the bot is in the channel or the ID is correct.")
+                return BotState.ENTER_SOURCE_ID
+
+        context.user_data['new_source_id'] = source_id
+        await status_msg.edit_text(f"🎯 **Source Verified:** `@{source_id if isinstance(source_id, str) else source_id}`\n\n**Step 3: Destination Platform**\nWhere should the AI content be published?", 
+                                 reply_markup=Menu.platform_selection("dest"), parse_mode="Markdown")
+        return BotState.SELECT_DEST_PLATFORM
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Verification Failed:** {e}\n\nPlease check the identifier and try again.")
+        return BotState.ENTER_SOURCE_ID
 
 async def receive_dest_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stores destination platform and asks for identifier."""
@@ -186,30 +216,56 @@ async def receive_dest_platform(update: Update, context: ContextTypes.DEFAULT_TY
     return BotState.ENTER_DEST_ID
 
 async def receive_dest_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receives dest ID and shows a professional summary."""
+    """Receives dest ID and verifies permissions/existence."""
     dest_id = update.message.text.strip()
     platform = context.user_data.get('new_dest_platform')
     
-    # Warning for common Telegram ID mistakes
-    if platform == "telegram" and not (dest_id.startswith("-100") or dest_id.startswith("@")):
-        await update.message.reply_text("⚠️ **Note:** Telegram channel IDs usually start with `-100...`. Double-check your ID.")
+    status_msg = await update.message.reply_text(f"🔍 **Verifying {platform.title()} Destination...**", parse_mode="Markdown")
+    
+    try:
+        if platform == "telegram":
+            chat = await context.bot.get_chat(dest_id)
+            me = await context.bot.get_me()
+            member = await chat.get_member(me.id)
+            
+            if member.status not in ['administrator', 'creator']:
+                await status_msg.edit_text("⚠️ **Warning:** The bot is NOT an administrator in this channel. It may not be able to post messages.")
+            else:
+                await status_msg.edit_text(f"✅ **Verified Destination:** {chat.title} (Admin Access)")
+            dest_id = chat.id
+            
+        elif platform == "twitter":
+            tw_user = db.get_setting("TWITTER_USERNAME")
+            tw_pass = db.get_setting("TWITTER_PASSWORD")
+            if not (tw_user and tw_pass):
+                await status_msg.edit_text("❌ **Twitter Credentials Missing.**\nPlease set them in Settings first.")
+                return ConversationHandler.END
+            
+            # Simple check if the target handle looks valid
+            if not re.match(r"^[\w]{1,15}$", dest_id.replace("@", "")):
+                await status_msg.edit_text("❌ **Invalid Twitter handle.**")
+                return BotState.ENTER_DEST_ID
+
+        context.user_data['new_dest_id'] = dest_id
         
-    context.user_data['new_dest_id'] = dest_id
-    
-    summary = (
-        "📦 **Final Task Review**\n\n"
-        f"📋 **Name:** `{context.user_data['new_task_name']}`\n"
-        f"📥 **Source:** `{context.user_data['new_source_platform']} ({context.user_data['new_source_id']})`\n"
-        f"📤 **Target:** `{context.user_data['new_dest_platform']} ({context.user_data['new_dest_id']})`\n\n"
-        "**Ready to launch?** The AI engine will monitor and redesign posts for you."
-    )
-    
-    await update.message.reply_text(
-        summary,
-        reply_markup=Menu.confirmation_keyboard("task_create"),
-        parse_mode="Markdown"
-    )
-    return BotState.CONFIRM_TASK
+        summary = (
+            "📦 **Final Task Review**\n\n"
+            f"📋 **Name:** `{context.user_data['new_task_name']}`\n"
+            f"📥 **Source:** `{context.user_data['new_source_platform']} ({context.user_data['new_source_id']})`\n"
+            f"📤 **Target:** `{context.user_data['new_dest_platform']} ({context.user_data['new_dest_id']})`\n\n"
+            "✅ **Verification Complete.** Ready to launch?"
+        )
+        
+        await status_msg.edit_text(
+            summary,
+            reply_markup=Menu.confirmation_keyboard("task_create"),
+            parse_mode="Markdown"
+        )
+        return BotState.CONFIRM_TASK
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ **Destination Verification Failed:** {e}\n\nPlease check the ID/username and try again.")
+        return BotState.ENTER_DEST_ID
 
 async def cancel_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels the conversation with a clear message."""

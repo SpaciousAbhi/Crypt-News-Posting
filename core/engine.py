@@ -8,6 +8,7 @@ from services.logger import logger
 from services.ai_service import ai_service
 from providers.sources.rss import RSSSource
 from providers.sources.twitter import TwikitSource
+from providers.sources.telegram import TelegramSource
 from providers.publishers.telegram import TelegramPublisher
 from providers.publishers.twitter import TwitterPublisher
 
@@ -15,8 +16,8 @@ class ProcessingEngine:
     def __init__(self, telegram_token: str):
         self.bot = Bot(telegram_token)
         self.rss = RSSSource()
-        self.tw_pub = None
-        self.tw_src = None
+        self.tg_src = TelegramSource(self.bot)
+        self.tw_src = None # Lazy-init per task if needed
         self._loop_active = False
 
     async def start(self, interval: int = 60):
@@ -73,6 +74,16 @@ class ProcessingEngine:
             items = []
             if platform == "twitter_rss":
                 items = self.rss.fetch_latest(identifier)
+            elif platform == "twitter":
+                tw_user = db.get_setting("TWITTER_USERNAME")
+                tw_pass = db.get_setting("TWITTER_PASSWORD")
+                if tw_user and tw_pass:
+                    tw_src = TwikitSource(tw_user, tw_pass)
+                    items = await tw_src.fetch_latest(identifier)
+                else:
+                    logger.error(f"[Engine] Task {task['name']}: Twitter credentials missing for direct source.")
+            elif platform == "telegram":
+                items = await self.tg_src.fetch_latest(identifier)
             
             for item in items:
                 if not db.is_item_processed(task_id, source_id, item.id):

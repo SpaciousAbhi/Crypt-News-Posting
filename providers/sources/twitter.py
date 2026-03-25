@@ -34,6 +34,17 @@ class TwikitSource:
             logger.error(f"[TwikitSource] Login failed: {e}")
             raise
 
+    async def verify_credentials(self) -> bool:
+        """Verifies if the credentials are valid by attempting login."""
+        try:
+            await self.client.login(auth_info_1=self.username, password=self.password)
+            self.client.save_cookies(self.cookies_path)
+            self._is_logged_in = True
+            return True
+        except Exception as e:
+            logger.error(f"[TwikitSource] Verification failed: {e}")
+            return False
+
     async def fetch_latest(self, username: str) -> List[SourceItem]:
         """Fetches latest tweets using twikit."""
         try:

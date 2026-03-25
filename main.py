@@ -54,16 +54,28 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return BotState.START
 
-async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles back-to-menu navigation."""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "🚀 **Main Menu**\n\nChoose an action:",
-        reply_markup=Menu.main_menu(),
-        parse_mode="Markdown"
-    )
     return BotState.START
+
+async def capture_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Global handler to capture messages for dynamic sources (Telegram)."""
+    if update.channel_post:
+        msg = update.channel_post
+        chat_id = msg.chat_id
+        content = msg.text or msg.caption or ""
+        item_id = str(msg.message_id)
+        
+        # Extract media
+        media_urls = []
+        if msg.photo:
+            photo = msg.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            media_urls.append(file.file_path)
+        elif msg.video:
+            file = await context.bot.get_file(msg.video.file_id)
+            media_urls.append(file.file_path)
+            
+        db.add_source_item(str(chat_id), "telegram", content, item_id, media_urls)
+        logger.debug(f"[Capture] Stored message {item_id} from {chat_id}")
 
 # --- Main Setup ---
 def main():
@@ -118,6 +130,9 @@ def main():
     )
 
     application.add_handler(conv_handler)
+    
+    # Global Message Capture for Sources
+    application.add_handler(MessageHandler(filters.ChatType.CHANNEL, capture_message))
     
     # Global handlers for navigation safety
     application.add_handler(CallbackQueryHandler(main_menu_callback, pattern="^menu_main$"))

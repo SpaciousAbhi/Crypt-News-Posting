@@ -108,6 +108,26 @@ class DatabaseManager:
                 item_id TEXT NOT NULL,
                 processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (task_id, source_id, item_id)
+            )""",
+            
+            # Dynamic Source Items (Capture)
+            """CREATE TABLE IF NOT EXISTS source_items (
+                id SERIAL PRIMARY KEY,
+                identifier TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                content TEXT,
+                media_json TEXT, -- JSON string of media URLs
+                item_id TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""" if self.is_postgres else 
+            """CREATE TABLE IF NOT EXISTS source_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                identifier TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                content TEXT,
+                media_json TEXT,
+                item_id TEXT UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )"""
         ]
         
@@ -263,6 +283,21 @@ class DatabaseManager:
             )
         except:
             pass # Already exists
+
+    # --- Source Item Capture ---
+    def add_source_item(self, identifier: str, platform: str, content: str, item_id: str, media_urls: List[str] = []):
+        try:
+            self.execute(
+                "INSERT INTO source_items (identifier, platform, content, item_id, media_json) VALUES (%s, %s, %s, %s, %s)",
+                (identifier, platform, content, item_id, json.dumps(media_urls))
+            )
+        except Exception as e:
+            # logger.error(f"[DB] Failed to add source item: {e}")
+            pass # Duplicate item_id
+
+    def get_unread_source_items(self, identifier: str, platform: str, limit: int = 5) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM source_items WHERE identifier = %s AND platform = %s ORDER BY created_at DESC LIMIT %s"
+        return self.fetch_all(query, (identifier, platform, limit))
 
 # Global Instance
 db = DatabaseManager()

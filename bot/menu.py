@@ -56,6 +56,7 @@ class Menu:
     def platform_selection(prefix: str):
         keyboard = [
             [InlineKeyboardButton("🐦 Twitter (via RSS Mirror)", callback_data=f"{prefix}_twitter_rss")],
+            [InlineKeyboardButton("🐦 Twitter (Direct Login)", callback_data=f"{prefix}_twitter")],
             [InlineKeyboardButton("✈️ Telegram Channel", callback_data=f"{prefix}_telegram")],
             [InlineKeyboardButton("❌ Abort & Cancel", callback_data="menu_main")]
         ]

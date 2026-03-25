@@ -7,6 +7,7 @@ from bot.menu import Menu
 from database.manager import db
 
 from services.config_service import config
+from providers.sources.twitter import TwikitSource
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows the settings menu with a professional overview."""
@@ -77,6 +78,22 @@ async def set_tw_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def set_tw_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db.set_setting("TWITTER_PASSWORD", update.message.text.strip())
-    await update.message.reply_text("✅ Twitter Password encrypted and saved!", reply_markup=Menu.main_menu())
+    password = update.message.text.strip()
+    username = db.get_setting("TWITTER_USERNAME")
+    
+    status_msg = await update.message.reply_text("🔄 **Verifying Twitter Credentials...**\n\nPlease wait while we authenticate with X.", parse_mode="Markdown")
+    
+    if username:
+        verify_src = TwikitSource(username=username, password=password)
+        is_valid = await verify_src.verify_credentials()
+        
+        if is_valid:
+            db.set_setting("TWITTER_PASSWORD", password)
+            await status_msg.edit_text("✅ **Twitter login successful!**\n\nYour account has been verified and saved.", reply_markup=Menu.main_menu(), parse_mode="Markdown")
+        else:
+            await status_msg.edit_text("❌ **Login Failed.**\n\nPlease check your username and password. Your password was NOT saved.", reply_markup=Menu.main_menu(), parse_mode="Markdown")
+    else:
+        db.set_setting("TWITTER_PASSWORD", password)
+        await status_msg.edit_text("✅ Twitter Password saved! (Note: Set username first to verify login)", reply_markup=Menu.main_menu(), parse_mode="Markdown")
+    
     return ConversationHandler.END
