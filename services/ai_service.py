@@ -1,9 +1,10 @@
 # services/ai_service.py
 
 import os
-from groq import Groq
+from groq import AsyncGroq
 from services.logger import logger
 from services.config_service import config
+from services.utils import retry_async
 
 class AIService:
     def __init__(self):
@@ -14,13 +15,14 @@ class AIService:
         api_key = config.groq_key
         if api_key:
             try:
-                self.client = Groq(api_key=api_key)
-                logger.info("[AI] Groq client initialized successfully.")
+                self.client = AsyncGroq(api_key=api_key)
+                logger.info("[AI] Async Groq client initialized.")
             except Exception as e:
-                logger.error(f"[AI] Failed to initialize Groq client: {e}")
+                logger.error(f"[AI] Failed to initialize Async Groq: {e}")
 
-    def process_content(self, text: str, options: dict) -> str:
-        """Transforms content into a premium format using LLaMA3."""
+    @retry_async(retries=3, delay=2.0, backoff=2.0)
+    async def process_content(self, text: str, options: dict) -> str:
+        """Transforms content into a premium format using LLaMA3 (Async)."""
         if not self.client:
             return text
 
@@ -47,7 +49,7 @@ class AIService:
         refinement_prompt = " ".join(user_prompts)
         
         try:
-            chat_completion = self.client.chat.completions.create(
+            chat_completion = await self.client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": system_instructions},
                     {"role": "user", "content": f"Task: {refinement_prompt}\n\nContent:\n{text}"}
@@ -57,8 +59,8 @@ class AIService:
             )
             return chat_completion.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"[AI] Processing failed: {e}")
-            return text
+            logger.error(f"[AI] Async processing failed: {e}")
+            raise # Let retry handle it
 
 # Global Instance
 ai_service = AIService()

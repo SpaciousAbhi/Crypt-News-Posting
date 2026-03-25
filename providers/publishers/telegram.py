@@ -3,14 +3,16 @@
 from telegram import Bot
 from telegram.constants import ParseMode
 from services.logger import logger
+from services.utils import retry_async
 from typing import List, Optional
 
 class TelegramPublisher:
     def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def publish(self, chat_id: str, text: str, media_urls: List[str] = []):
-        """Publishes content with auto-splitting for long texts."""
+    @retry_async(retries=3, delay=2.0)
+    async def publish(self, chat_id: str, text: str, media_urls: List[str] = []) -> bool:
+        """Publishes content with auto-splitting for long texts. Returns True on success."""
         try:
             # 1. Handle Text Splitting (> 4096 chars)
             max_len = 4000

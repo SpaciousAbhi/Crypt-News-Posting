@@ -97,11 +97,13 @@ def main():
     # 1. Setup Application
     application = Application.builder().token(token).build()
 
-    # 2. Define Main ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_command),
-            CommandHandler("help", show_help)
+            CommandHandler("help", show_help),
+            CallbackQueryHandler(add_task_start, pattern="^tasks_add$"),
+            CallbackQueryHandler(view_tasks, pattern="^tasks_view$"),
+            CallbackQueryHandler(show_settings, pattern="^settings_view$")
         ],
         states={
             BotState.START: [
@@ -151,16 +153,21 @@ def main():
     # 3. Initialize Background Engine
     engine = ProcessingEngine(token)
     
-    # We use a helper to start the engine in the background
-    async def start_engine():
-        await engine.start(interval=60)
+    async def engine_supervisor():
+        """Keeps the engine running even if it crashes."""
+        while True:
+            try:
+                logger.info("[Main] Starting Engine Supervisor...")
+                await engine.start(interval=60)
+            except Exception as e:
+                logger.error(f"[Main] Engine crashed: {e}. Restarting in 10s...")
+                await asyncio.sleep(10)
 
     # 4. Run Everything
-    logger.info("[Main] Launching bot and background engine...")
+    logger.info("[Main] Launching bot and supervisor...")
     
-    # For Heroku and local async stability:
     loop = asyncio.get_event_loop()
-    loop.create_task(start_engine())
+    loop.create_task(engine_supervisor())
     
     application.run_polling()
 

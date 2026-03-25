@@ -25,7 +25,7 @@ async def view_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=Menu.task_list(tasks),
             parse_mode="Markdown"
         )
-    return ConversationHandler.END
+    return BotState.START
 
 async def manage_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows options for a specific task."""
@@ -37,7 +37,7 @@ async def manage_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not task:
         await query.edit_message_text("❌ Task not found.", reply_markup=Menu.main_menu())
-        return ConversationHandler.END
+        return BotState.START
 
     status_str = "✅ Active" if task['is_active'] else "⏸ Paused"
     detail_text = (
@@ -52,7 +52,7 @@ async def manage_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=Menu.task_manage(task),
         parse_mode="Markdown"
     )
-    return ConversationHandler.END
+    return BotState.START
 
 async def toggle_task_status(update: Update, context: ContextTypes.DEFAULT_TYPE, status: bool):
     """Pauses or resumes a task with feedback."""
@@ -64,7 +64,7 @@ async def toggle_task_status(update: Update, context: ContextTypes.DEFAULT_TYPE,
     
     action = "RESUMED ▶️" if status else "PAUSED ⏸"
     await query.edit_message_text(f"✨ **Task Status Updated!**\n\nThe task has been {action} and the engine has been notified.", reply_markup=Menu.main_menu(), parse_mode="Markdown")
-    return ConversationHandler.END
+    return BotState.START
 
 async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Deletes a task permanently."""
@@ -75,7 +75,7 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.delete_task(task_id)
     
     await query.edit_message_text("🗑️ **Task Deleted.**\n\nTask and all associated history have been removed from the database.", reply_markup=Menu.main_menu(), parse_mode="Markdown")
-    return ConversationHandler.END
+    return BotState.START
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows a professional, detailed help guide."""
@@ -94,7 +94,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(help_text, reply_markup=Menu.main_menu(), parse_mode="Markdown")
     else:
         await update.message.reply_text(help_text, reply_markup=Menu.main_menu(), parse_mode="Markdown")
-    return ConversationHandler.END
+    return BotState.START
 
 async def add_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the 'Add Task' conversation with clear guidance."""
@@ -172,8 +172,8 @@ async def receive_source_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tw_user = db.get_setting("TWITTER_USERNAME")
             tw_pass = db.get_setting("TWITTER_PASSWORD")
             if not (tw_user and tw_pass):
-                await status_msg.edit_text("❌ **Twitter Credentials Missing.**\nPlease set your username and password in **Settings** first.")
-                return ConversationHandler.END
+                await status_msg.edit_text("❌ **Twitter Credentials Missing.**\nPlease set your username and password in **Settings** first.", reply_markup=Menu.main_menu())
+                return BotState.START
             
             tw_src = TwikitSource(tw_user, tw_pass)
             await tw_src.fetch_latest(source_id) # This will verify login and user existence
@@ -238,8 +238,8 @@ async def receive_dest_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tw_user = db.get_setting("TWITTER_USERNAME")
             tw_pass = db.get_setting("TWITTER_PASSWORD")
             if not (tw_user and tw_pass):
-                await status_msg.edit_text("❌ **Twitter Credentials Missing.**\nPlease set them in Settings first.")
-                return ConversationHandler.END
+                await status_msg.edit_text("❌ **Twitter Credentials Missing.**\nPlease set them in Settings first.", reply_markup=Menu.main_menu())
+                return BotState.START
             
             # Simple check if the target handle looks valid
             if not re.match(r"^[\w]{1,15}$", dest_id.replace("@", "")):
@@ -277,7 +277,7 @@ async def cancel_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=Menu.main_menu(), parse_mode="Markdown")
     else:
         await update.message.reply_text(text, reply_markup=Menu.main_menu(), parse_mode="Markdown")
-    return ConversationHandler.END
+    return BotState.START
 
 async def commit_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Saves the task with a celebratory success message."""
@@ -299,4 +299,4 @@ async def commit_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text("❌ **Task Aborted.**\n\nNo changes were saved.", reply_markup=Menu.main_menu(), parse_mode="Markdown")
         
-    return ConversationHandler.END
+    return BotState.START

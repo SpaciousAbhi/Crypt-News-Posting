@@ -5,6 +5,7 @@ import sqlite3
 import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from services.logger import logger
 
 class DatabaseManager:
     def __init__(self, db_url: Optional[str] = None):
@@ -15,18 +16,42 @@ class DatabaseManager:
         if self.is_postgres and self.db_url.startswith("postgres://"):
             self.db_url = self.db_url.replace("postgres://", "postgresql://", 1)
             
+        self._pool = None
+        self._sqlite_conn = None
+        self._init_pool()
         self._init_db()
+
+    def _init_pool(self):
+        """Initializes the connection pool."""
+        if self.is_postgres:
+            from psycopg2.pool import ThreadedConnectionPool
+            try:
+                # 5-20 connections in the pool
+                self._pool = ThreadedConnectionPool(5, 20, self.db_url)
+                logger.info("[DB] PostgreSQL connection pool initialized.")
+            except Exception as e:
+                logger.error(f"[DB] Failed to initialize Postgres pool: {e}")
+        else:
+            # For SQLite, we use a single persistent connection with WAL mode
+            self._sqlite_conn = sqlite3.connect(self.db_url, check_same_thread=False)
+            self._sqlite_conn.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency
+            self._sqlite_conn.execute("PRAGMA journal_mode=WAL")
+            logger.info("[DB] SQLite persistent connection initialized (WAL mode).")
 
     def _get_connection(self):
         if self.is_postgres:
-            import psycopg2
+            if not self._pool: self._init_pool()
+            conn = self._pool.getconn()
             from psycopg2.extras import RealDictCursor
-            conn = psycopg2.connect(self.db_url)
             return conn, conn.cursor(cursor_factory=RealDictCursor)
         else:
-            conn = sqlite3.connect(self.db_url)
-            conn.row_factory = sqlite3.Row
-            return conn, conn.cursor()
+            return self._sqlite_conn, self._sqlite_conn.cursor()
+
+    def _release_connection(self, conn):
+        if self.is_postgres and self._pool:
+            self._pool.putconn(conn)
+        # SQLite connection is persistent, no need to release
 
     def _init_db(self):
         conn, cursor = self._get_connection()
@@ -146,32 +171,36 @@ class DatabaseManager:
                 
             conn.commit()
         finally:
-            conn.close()
+            if self.is_postgres: self._release_connection(conn)
 
     def execute(self, query: str, params: tuple = ()):
         conn, cursor = self._get_connection()
         try:
-            # Handle placeholder difference
             if not self.is_postgres:
                 query = query.replace("%s", "?")
-            
             cursor.execute(query, params)
             conn.commit()
             return cursor
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"[DB] Execute error: {e}")
+            raise
         finally:
-            conn.close()
+            if self.is_postgres: self._release_connection(conn)
 
     def fetch_all(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         conn, cursor = self._get_connection()
         try:
             if not self.is_postgres:
                 query = query.replace("%s", "?")
-                
             cursor.execute(query, params)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"[DB] Fetch error: {e}")
+            return []
         finally:
-            conn.close()
+            if self.is_postgres: self._release_connection(conn)
 
     def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         results = self.fetch_all(query, params)
@@ -198,15 +227,15 @@ class DatabaseManager:
             query = f"INSERT INTO tasks (name, user_id, config) VALUES ({placeholder}, {placeholder}, {placeholder})"
             if self.is_postgres:
                 query += " RETURNING id"
-                cursor.execute(query, (name, user_id, json.dumps(config)))
+                cursor.execute(query, (name, user_id, json.dumps(config or {})))
                 task_id = cursor.fetchone()['id']
             else:
-                cursor.execute(query, (name, user_id, json.dumps(config)))
+                cursor.execute(query, (name, user_id, json.dumps(config or {})))
                 task_id = cursor.lastrowid
             conn.commit()
             return task_id
         finally:
-            conn.close()
+            if self.is_postgres: self._release_connection(conn)
 
     def update_task(self, task_id: int, updates: Dict[str, Any]):
         """Updates task fields (name, config, is_active)."""

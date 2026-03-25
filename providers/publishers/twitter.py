@@ -3,7 +3,8 @@
 import os
 from twikit import Client
 from services.logger import logger
-from typing import List, Optional
+from services.utils import retry_async
+from typing import List, Optional, Any
 
 class TwitterPublisher:
     def __init__(self, username: str, password: str, cookies_path: str = "cookies_tw.json"):
@@ -30,23 +31,22 @@ class TwitterPublisher:
             logger.error(f"[Twitter] Login failed: {e}")
             raise
 
-    async def _download_media(self, url: str) -> Optional[str]:
-        """Downloads media to a temporary file."""
-        import httpx
+    async def _download_media(self, url: str, client: Any) -> Optional[str]:
+        """Downloads media to a temporary file using provided client."""
         import tempfile
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=10)
-                if resp.status_code == 200:
-                    ext = url.split(".")[-1].split("?")[0] or "jpg"
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
-                    temp_file.write(resp.content)
-                    temp_file.close()
-                    return temp_file.name
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                ext = url.split(".")[-1].split("?")[0] or "jpg"
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
+                temp_file.write(resp.content)
+                temp_file.close()
+                return temp_file.name
         except Exception as e:
             logger.error(f"[Twitter] Download failed for {url}: {e}")
         return None
 
+    @retry_async(retries=3, delay=5.0)
     async def publish(self, text: str, media_urls: List[str] = []):
         """Publishes content to Twitter with media support."""
         media_ids = []
@@ -55,15 +55,18 @@ class TwitterPublisher:
             await self._ensure_login()
             
             # Twitter allows up to 4 images
-            for url in media_urls[:4]:
-                local_path = await self._download_media(url)
-                if local_path:
-                    temp_files.append(local_path)
-                    try:
-                        mid = await self.client.upload_media(local_path)
-                        media_ids.append(mid)
-                    except Exception as e:
-                        logger.error(f"[Twitter] Upload failed for {url}: {e}")
+            import httpx
+            from typing import Any
+            async with httpx.AsyncClient(timeout=15) as client:
+                for url in media_urls[:4]:
+                    local_path = await self._download_media(url, client)
+                    if local_path:
+                        temp_files.append(local_path)
+                        try:
+                            mid = await self.client.upload_media(local_path)
+                            media_ids.append(mid)
+                        except Exception as e:
+                            logger.error(f"[Twitter] Upload failed for {url}: {e}")
 
             await self.client.create_tweet(text=text, media_ids=media_ids if media_ids else None)
             logger.info(f"[Twitter] Published tweet with {len(media_ids)} media items.")

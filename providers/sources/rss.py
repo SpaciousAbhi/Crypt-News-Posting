@@ -36,11 +36,18 @@ class RSSSource:
         items = []
         errors = []
 
+        import httpx
         for mirror in self.mirrors:
             rss_url = f"{mirror}/{identifier.strip('@')}/rss"
             try:
                 logger.info(f"[RSS] Fetching from mirror: {mirror}")
-                feed = feedparser.parse(rss_url)
+                # Use httpx for a proper timeout (feedparser doesn't support it)
+                with httpx.Client(timeout=10, follow_redirects=True) as client:
+                    resp = client.get(rss_url)
+                    resp.raise_for_status()
+                    xml_content = resp.text
+                
+                feed = feedparser.parse(xml_content)
                 
                 if feed.bozo:
                     raise Exception(f"Feed parsing error: {feed.bozo_exception}")
